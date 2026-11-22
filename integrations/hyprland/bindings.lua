@@ -14,8 +14,8 @@ o.bind_hold(
   "seslinot record stop"
 )
 
--- Sesli not + doğrudan derin araştırma tetikleme
-o.bind("SUPER + ALT + N", "SesliNot araştırma kaydı", "seslinot record toggle --research")
+-- Aktif uzun ses kaydını duraklat / devam ettir
+o.bind("SUPER + ALT + N", "SesliNot duraklat/devam", "seslinot record pause-toggle")
 
 -- Aktif ses kaydını iptal et
 o.bind("SUPER + SHIFT + ESCAPE", "SesliNot kaydı iptal et", "seslinot record cancel")
