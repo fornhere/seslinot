@@ -12,6 +12,7 @@ from pathlib import Path
 
 from seslinot.config import SesliNotConfig
 from seslinot.models import DesktopState
+from seslinot.platform.os_compat import popen_isolated_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class OmarchyOSD:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,
+                **popen_isolated_kwargs(),
             )
             return True
         except OSError as exc:

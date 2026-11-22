@@ -7,7 +7,6 @@ kilitli yazım ile dosya yazar.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -19,6 +18,7 @@ from typing import Any
 
 from seslinot.config import SesliNotConfig
 from seslinot.models import ResearchReportInput, VoiceNoteRecord
+from seslinot.platform.os_compat import exclusive_file_lock
 
 # --- Yasaklı Hafıza OS dizinleri (asla doğrudan yazılmaz) ---
 
@@ -252,17 +252,14 @@ def safe_vault_path(vault: Path, rel_path: str) -> Path:
 
 
 def atomic_write_text(path: Path, content: str, lock_path: Path) -> None:
-    """Harici `fcntl.flock` kilidi altında dot-prefixed temp + fsync + os.replace yazar.
+    """Harici çapraz-platform dosya kilidi altında dot-prefixed temp + fsync + os.replace yazar.
 
     Kilit dosyası (`lock_path`) ASLA silinmez (unlink edilmez).
     """
     lock_file = Path(lock_path).expanduser()
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
     target = Path(path)
 
-    lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    with exclusive_file_lock(lock_file):
         target.parent.mkdir(parents=True, exist_ok=True)
 
         tmp_name = f".seslinot-{os.getpid()}-{secrets.token_hex(6)}.tmp"
@@ -286,11 +283,6 @@ def atomic_write_text(path: Path, content: str, lock_path: Path) -> None:
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
-    finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
 
 
 def _normalize_rel_posix(rel_path: str) -> str:

@@ -1,7 +1,7 @@
 """Vault yazıcı, kasa-dışı FTS5 dizin ve Hafıza OS köprüsü birim testleri.
 
 Tüm testler kesinlikle `tmp_path` içinde çalışır; kullanıcının gerçek
-kasasına (`/home/forn/Hafıza`) veya `~/.config/` dizinine ASLA dokunmaz.
+kasasına (`~/Obsidian/...`) veya `~/.config/` dizinine ASLA dokunmaz.
 """
 
 from __future__ import annotations
@@ -705,25 +705,26 @@ def test_hafiza_bridge_generic_vault_and_privacy_firewall(tmp_path: Path) -> Non
     assert bundle.hits[0].path == "sesli-notlar/2026-11/not.md"
 
     # Gizlilik Duvarı (Privacy Firewall)
+    cfg.vault.personal_terms = ["dorn", "dornhere"]
     dirty_query = (
-        "Forn'un /home/forn/Hafıza/projeler/gizli-kodadi/not.md dosyasındaki "
-        "gizli-kodadi, OzelMusteri ve IcProjeX için fornhere YouTube California PipeWire "
+        "Dorn'un /home/alice/Vault/projeler/gizli-kodadi/not.md dosyasındaki "
+        "gizli-kodadi, OzelMusteri ve IcProjeX için dornhere YouTube Adorned PipeWire "
         "sk-proj-abcdefghijklmnopqrstuvwxyz123456 ayarları"
     )
     sanitized = bridge.sanitize_web_query(dirty_query, private_terms=["OzelMusteri"])
     for forbidden in (
-        "Forn",
-        "fornhere",
-        "/home/forn",
+        "Dorn",
+        "dornhere",
+        "/home/alice",
         "gizli-kodadi",
         "OzelMusteri",
         "IcProjeX",
         "sk-proj-",
     ):
         assert forbidden not in sanitized
-    assert "forn" not in sanitized.replace("California", "").lower()
+    assert "dorn" not in sanitized.replace("Adorned", "").lower()
     assert "YouTube" in sanitized
-    assert "California" in sanitized
+    assert "Adorned" in sanitized
     assert "PipeWire" in sanitized
 
 
@@ -827,10 +828,11 @@ sys.exit(2)
 
     # Açık kullanıcı onaylı terfi akışı (candidate-add -> candidate-assess -> promote --apply)
     promo = bridge.promote_user_approved_memory(
-        statement="Forn sesli not özetlerinin en fazla 3 madde olmasını tercih eder.",
+        statement="Kullanıcı sesli not özetlerinin en fazla 3 madde olmasını tercih eder.",
         subject_key="seslinot.ozet.uzunluk",
         source_path="sesli-notlar/2026-11/ozet-notu.md",
         memory_id="seslinot-ozet-3-madde",
+        reviewed_by="reviewer1",
         user_approved=True,
     )
     assert promo["ok"] is True
@@ -846,7 +848,7 @@ sys.exit(2)
     assert "candidate-assess" in promo_calls[1]["argv"]
     assert "promote" in promo_calls[2]["argv"]
     assert "--reviewed-by" in promo_calls[2]["argv"]
-    assert "forn" in promo_calls[2]["argv"]
+    assert "reviewer1" in promo_calls[2]["argv"]
     assert "--apply" in promo_calls[2]["argv"]
 
     # Eligible olmayan aday (duplicate) promote çağırmamalı

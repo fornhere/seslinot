@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 import shutil
-import signal
 from pathlib import Path
 
+from seslinot.platform.os_compat import (
+    current_platform,
+    popen_isolated_kwargs,
+    terminate_process_tree_async,
+)
 from seslinot.research.adapters.base import WorkerAdapter, WorkerRequest, WorkerResult
 
 _UNIT_SAFE_RE = re.compile(r"[^A-Za-z0-9:_.-]+")
@@ -23,8 +26,8 @@ def sanitize_unit_name(name: str) -> str:
 
 
 async def cancel_unit(unit_name: str) -> bool:
-    """Çalışan bir user systemd transient unit'ini durdurur."""
-    if not unit_name or shutil.which("systemctl") is None:
+    """Çalışan bir user systemd transient unit'ini durdurur (yalnız Linux)."""
+    if current_platform() != "linux" or not unit_name or shutil.which("systemctl") is None:
         return False
     safe_unit = sanitize_unit_name(unit_name)
     try:
@@ -72,34 +75,7 @@ async def _feed_stdin(stream: asyncio.StreamWriter | None, payload: bytes | None
 
 
 async def _terminate_process_group(proc: asyncio.subprocess.Process) -> None:
-    if proc.returncode is not None:
-        return
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    except OSError:
-        try:
-            proc.terminate()
-        except ProcessLookupError:
-            return
-
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=2.5)
-    except TimeoutError:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except TimeoutError:
-            pass
+    await terminate_process_tree_async(proc)
 
 
 class ProcessRunner:
@@ -115,9 +91,10 @@ class ProcessRunner:
         unit_name: str | None,
         timeout_secs: int,
     ) -> tuple[list[str], str | None]:
-        """Uygun olduğunda komutu systemd-run --user kaynak kısıtlamalarıyla sarar."""
+        """Linux'ta uygun olduğunda komutu systemd-run --user kaynak kısıtlamalarıyla sarar."""
         if (
-            self.use_systemd_run
+            current_platform() == "linux"
+            and self.use_systemd_run
             and unit_name
             and shutil.which("systemd-run") is not None
         ):
@@ -143,6 +120,11 @@ class ProcessRunner:
     async def run(self, adapter: WorkerAdapter, req: WorkerRequest) -> WorkerResult:
         """Adaptör komutunu çalıştırır, stdout/stderr/exit.code kaydeder ve sonucu ayrıştırır."""
         req.work_dir.mkdir(parents=True, exist_ok=True)
+        # Direct API gibi süreç-dışı asenkron yürütme desteği
+        direct_exec = getattr(adapter, "execute_direct", None)
+        if callable(direct_exec):
+            return await direct_exec(req)
+
         argv, stdin_bytes, output_file_path = adapter.build_command(req)
 
         raw_stream_path = req.work_dir / "raw_stream.jsonl"
@@ -162,7 +144,7 @@ class ProcessRunner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(req.work_dir),
-                start_new_session=True,
+                **popen_isolated_kwargs(),
             )
         except FileNotFoundError as exc:
             exit_code_path.write_text("127\n", encoding="utf-8")

@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from seslinot.config import SesliNotConfig
 from seslinot.models import VaultContextBundle, VaultContextHit
+from seslinot.platform.os_compat import default_user_name, is_hafiza_os_vault
 from seslinot.vault.index import VaultIndex
 from seslinot.vault.writer import (
     SECRET_RULES,
@@ -23,7 +24,6 @@ from seslinot.vault.writer import (
     turkish_slug,
 )
 
-_DEFAULT_PERSONAL_TERMS: tuple[str, ...] = ("forn", "fornhere")
 _GENERIC_SUBJECT_TERMS: frozenset[str] = frozenset(
     {"kullanıcı", "kullanici", "user", "kişi", "kisi", "ben"}
 )
@@ -46,7 +46,7 @@ def _nfc(text: str) -> str:
 
 
 class HafizaBridge:
-    """Hafıza OS `araclar/hafiza.py` ve `VaultIndex` birleşik köprü katmanı."""
+    """Hafıza OS `araclar/hafiza.py` ve `VaultIndex` birleşik köprü katmanı (opsiyonel eklenti)."""
 
     def __init__(
         self,
@@ -61,10 +61,21 @@ class HafizaBridge:
         self.index = index or VaultIndex(self.vault_path, cfg.paths.fts_db_path)
 
     @property
+    def hafiza_os_enabled(self) -> bool:
+        mode = getattr(self.cfg.vault, "hafiza_os_mode", "auto")
+        if mode == "disabled":
+            return False
+        if mode == "enabled":
+            return True
+        return is_hafiza_os_vault(self.vault_path)
+
+    @property
     def hafiza_script(self) -> Path:
         return self.vault_path / self.cfg.vault.hafiza_tools_dir / "hafiza.py"
 
     def _has_hafiza_script(self) -> bool:
+        if not self.hafiza_os_enabled:
+            return False
         script = self.hafiza_script
         if not script.is_file() or script.is_symlink():
             return False
@@ -264,8 +275,8 @@ class HafizaBridge:
         )
 
     def _collect_private_terms(self, extra_terms: list[str] | None = None) -> list[str]:
-        terms: list[str] = list(_DEFAULT_PERSONAL_TERMS)
-        seen: set[str] = {turkish_lower(t) for t in terms}
+        terms: list[str] = []
+        seen: set[str] = set()
 
         def _add(term: str) -> None:
             clean = _nfc(term.strip())
@@ -274,6 +285,14 @@ class HafizaBridge:
                 return
             seen.add(key)
             terms.append(clean)
+
+        # Yapılandırmadaki kişisel terimler ve yerel OS kullanıcı adı (otomatik mahremiyet)
+        for item in getattr(self.cfg.vault, "personal_terms", ()):
+            if isinstance(item, str):
+                _add(item)
+        os_user = default_user_name()
+        if os_user and len(os_user) >= 3 and os_user.lower() not in {"user", "root", "admin", "runner"}:
+            _add(os_user)
 
         # komuta/kavramlar.json -> ozne listesi
         kavram_path = self.vault_path / "komuta" / "kavramlar.json"
@@ -380,7 +399,7 @@ class HafizaBridge:
         scope: str = "user",
         kind: str = "semantic",
         memory_id: str | None = None,
-        reviewed_by: str = "forn",
+        reviewed_by: str | None = None,
         proposed_by: str = "seslinot",
         evidence: str | None = None,
         category: str | None = None,
@@ -395,6 +414,8 @@ class HafizaBridge:
         """
         if not user_approved:
             raise ValueError("Kullanıcı onayı olmadan Hafıza OS terfisi yapılamaz")
+
+        reviewer = (reviewed_by or default_user_name()).strip() or "user"
 
         clean_statement = _nfc(statement.strip())
         if not clean_statement:
@@ -459,7 +480,7 @@ class HafizaBridge:
                 "assessment": assess_res,
             }
 
-        # 3. promote --reviewed-by <reviewed_by> --apply
+        # 3. promote --reviewed-by <reviewer> --apply
         final_memory_id = memory_id or (
             f"seslinot-{turkish_slug(subject_key, max_words=4)}-{secrets.token_hex(3)}"
         )
@@ -469,7 +490,7 @@ class HafizaBridge:
             "--memory-id",
             final_memory_id,
             "--reviewed-by",
-            reviewed_by,
+            reviewer,
             "--apply",
         ]
         if supersedes:

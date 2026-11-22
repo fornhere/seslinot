@@ -879,7 +879,7 @@ async def test_orchestrator_end_to_end_fallback_audit_repair_and_privacy(tmp_pat
                             subtopic="Quantum ve Tampon Ayarları",
                             objective="Resmi PipeWire gecikme belgelerini tara.",
                             queries_en=[
-                                "PipeWire low latency quantum /home/forn/HafizaTest/notlar/pipewire.md",
+                                "PipeWire low latency quantum /home/alice/HafizaTest/notlar/pipewire.md",
                             ],
                             queries_tr=["PipeWire düşük gecikme HafizaTest"],
                         ),
@@ -1119,7 +1119,7 @@ async def test_orchestrator_end_to_end_fallback_audit_repair_and_privacy(tmp_pat
 
     # Gizlilik sanitizasyonu: yerel yol ve kasa adı frozen worker promptundan temizlenmiş olmalı
     w1_prompt = (sess_dir / "directives/worker_01.prompt.md").read_text(encoding="utf-8")
-    assert "/home/forn" not in w1_prompt
+    assert "/home/alice" not in w1_prompt
     assert "HafizaTest" not in w1_prompt
 
     # Worker 1 codex -> claude fallback çalışmış olmalı
@@ -1320,20 +1320,20 @@ def test_sanitize_web_queries_strips_emails_tokens_and_paths(tmp_path: Path) -> 
                 subtopic="s",
                 objective="o",
                 queries_en=[
-                    "PipeWire user@example.com sk-1234567890abcdef /home/forn/Hafıza/gizli.md config"
+                    "PipeWire user@example.com sk-1234567890abcdef /home/alice/Vault/gizli.md config"
                 ],
-                queries_tr=["~/Hafıza/notlar/ozel-proje.md PipeWire gecikme"],
+                queries_tr=["~/Vault/notlar/ozel-proje.md PipeWire gecikme"],
             )
         ],
     )
-    cleaned = sanitize_web_queries(plan, None, tmp_path / "Hafıza")
+    cleaned = sanitize_web_queries(plan, None, tmp_path / "Vault")
     q_en = cleaned.directives[0].queries_en[0]
     q_tr = cleaned.directives[0].queries_tr[0]
     assert "user@example.com" not in q_en
     assert "sk-1234567890abcdef" not in q_en
-    assert "/home/forn" not in q_en
+    assert "/home/alice" not in q_en
     assert "PipeWire" in q_en and "config" in q_en
-    assert "~/Hafıza" not in q_tr
+    assert "~/Vault" not in q_tr
     assert "ozel-proje.md" not in q_tr
     assert "PipeWire gecikme" in q_tr
 

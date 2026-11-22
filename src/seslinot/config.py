@@ -5,26 +5,29 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from seslinot.platform.os_compat import (
+    current_platform,
+    default_config_dir,
+    default_data_dir,
+    default_runtime_dir,
+    default_state_dir,
+)
+
 DEFAULT_INITIAL_PROMPT = (
-    "Claude Code'da yeni bir branch açtım, commit attım ve push ettim. "
-    "Prompt, prompt injection, agent, subagent, model, benchmark, deploy, "
-    "frontend, backend, bug, fix, API, GPU, open source, fine-tune, render, "
-    "workflow, Obsidian, Markdown, DeepSeek, Kimi, Codex, Claude, Opus, Sonnet, "
-    "Gemini, Hyprland, Omarchy, PipeWire, Wayland, terminal, YouTube, thumbnail."
+    "Claude Code, Codex, Git, branch, commit, push, prompt, prompt injection, "
+    "agent, subagent, model, benchmark, deploy, frontend, backend, bug, fix, API, "
+    "GPU, open source, fine-tune, render, workflow, Obsidian, Markdown, DeepSeek, "
+    "Claude, Sonnet, Gemini, Wayland, PipeWire, Windows, macOS, Linux, terminal."
 )
 
 
-def _default_runtime_dir() -> Path:
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
-        return Path(xdg) / "seslinot"
-    return Path(f"/tmp/seslinot-{os.getuid()}")
-
-
 def _read_voxtype_initial_prompt() -> str | None:
+    if current_platform() != "linux":
+        return None
     cfg = Path.home() / ".config/voxtype/config.toml"
     if not cfg.is_file():
         return None
@@ -39,18 +42,24 @@ def _read_voxtype_initial_prompt() -> str | None:
 
 
 class VaultConfig(BaseModel):
-    path: Path = Field(default_factory=lambda: Path.home() / "Hafıza")
-    vault_name: str = "Hafıza"
+    path: Path = Field(default_factory=lambda: Path.home() / "Obsidian" / "SesliNot")
+    vault_name: str = ""
     voice_dir: str = "sesli-notlar"
     research_dir: str = "araştırmalar"
     hafiza_tools_dir: str = "araclar"
+    hafiza_os_mode: Literal["auto", "enabled", "disabled"] = "auto"
+    personal_terms: list[str] = Field(default_factory=list)
     auto_update_maps: bool = True
+
+    def model_post_init(self, __context: object) -> None:
+        if not self.vault_name:
+            self.vault_name = self.path.name or "SesliNot"
 
 
 class PathsConfig(BaseModel):
-    data_dir: Path = Field(default_factory=lambda: Path.home() / ".local/share/seslinot")
-    state_dir: Path = Field(default_factory=lambda: Path.home() / ".local/state/seslinot")
-    runtime_dir: Path = Field(default_factory=_default_runtime_dir)
+    data_dir: Path = Field(default_factory=default_data_dir)
+    state_dir: Path = Field(default_factory=default_state_dir)
+    runtime_dir: Path = Field(default_factory=default_runtime_dir)
 
     @property
     def db_path(self) -> Path:
@@ -108,8 +117,11 @@ class PathsConfig(BaseModel):
 class AudioConfig(BaseModel):
     sample_rate: int = 16000
     channels: int = 1
+    capture_backend: Literal["auto", "pipewire", "sounddevice"] = "auto"
+    stt_provider: Literal["local", "groq", "openai", "custom"] = "local"
     stt_endpoint: str = "http://127.0.0.1:8178/v1/audio/transcriptions"
     stt_model: str = "whisper-1"
+    stt_api_key_env: str = ""
     stt_timeout_secs: float = 120.0
     stt_fallback_voxtype: bool = True
     language: str = "tr"
@@ -152,6 +164,12 @@ class ResearchConfig(BaseModel):
     audit_model: str = "gpt-6-luna"
     audit_fallback_backend: str = "claude"
     audit_fallback_model: str = "sonnet"
+    # Direct API modu (CLI aboneliği olmayan Windows/macOS/Linux kullanıcıları için)
+    api_provider: Literal["openai", "anthropic"] = "openai"
+    api_base_url: str = ""
+    api_key_env: str = ""
+    api_model: str = "gpt-4o-mini"
+    search_provider: Literal["auto", "tavily", "brave", "ddg"] = "auto"
     max_subagents: int = 4
     max_concurrent_jobs: int = 2
     worker_timeout_secs: int = 420
@@ -172,6 +190,7 @@ class DesktopConfig(BaseModel):
     plugin_panel_target: str = "forn.seslinot"
     app_name: str = "SesliNot"
     poll_interval_secs: float = 2.0
+    hotkey_toggle: str = "<ctrl>+<alt>+n"
 
 
 class SesliNotConfig(BaseModel):
@@ -187,7 +206,7 @@ def default_config_path() -> Path:
     env_path = os.environ.get("SESLINOT_CONFIG")
     if env_path:
         return Path(env_path).expanduser()
-    return Path.home() / ".config/seslinot/config.toml"
+    return default_config_dir() / "config.toml"
 
 
 def load_config(path: Path | None = None) -> SesliNotConfig:
