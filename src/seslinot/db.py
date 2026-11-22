@@ -273,6 +273,9 @@ class SesliNotDB:
         job_id: str,
         status: JobStatus,
         *,
+        topic: str | None = None,
+        depth: str | None = None,
+        confidence: float | None = None,
         phase: ResearchPhase | None = None,
         phase_detail: str | None = None,
         error_message: str | None = None,
@@ -287,6 +290,15 @@ class SesliNotDB:
     ) -> None:
         fields: list[str] = ["status = ?"]
         params: list[Any] = [status.value]
+        if topic is not None:
+            fields.append("topic = ?")
+            params.append(topic)
+        if depth is not None:
+            fields.append("depth = ?")
+            params.append(depth)
+        if confidence is not None:
+            fields.append("confidence = ?")
+            params.append(confidence)
         if phase is not None:
             fields.append("phase = ?")
             params.append(phase.value)

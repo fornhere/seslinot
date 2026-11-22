@@ -330,26 +330,18 @@ class SesliNotDaemon:
 
         async def _lazy_route(job: ResearchJob) -> RouteDecision:
             try:
-                router_mod = importlib.import_module("seslinot.router")
-            except ImportError as exc:
-                raise RuntimeError(
-                    "seslinot.router modülü yüklü değil ve route_handler enjekte edilmedi"
-                ) from exc
-
-            if hasattr(router_mod, "IntentRouter"):
-                router = router_mod.IntentRouter(self.cfg)
-                res = router.route(job.raw_prompt)
-            elif hasattr(router_mod, "route_transcript"):
-                res = router_mod.route_transcript(job.raw_prompt, self.cfg)
-            else:
-                raise RuntimeError(
-                    "seslinot.router içinde IntentRouter veya route_transcript bulunamadı"
+                pipeline_mod = importlib.import_module("seslinot.pipeline")
+                pipeline = pipeline_mod.SesliNotPipeline(
+                    self.cfg, db=self.db, osd=self.osd, notifier=self.notifier
                 )
-            if inspect.isawaitable(res):
-                res = await res
-            if not isinstance(res, RouteDecision):
+                return await pipeline.route_job(job)
+            except ImportError:
+                router_mod = importlib.import_module("seslinot.router")
+                router = router_mod.IntentRouter(self.cfg)
+                res = await router.route(job.raw_prompt, force_stage2=True)
+                if isinstance(res, tuple):
+                    return res[0]
                 return RouteDecision.model_validate(res)
-            return res
 
         return _lazy_route
 
@@ -361,32 +353,11 @@ class SesliNotDaemon:
             job: ResearchJob,
             on_phase: PhaseCallback,
         ) -> ResearchExecutionResult | dict[str, Any] | None:
-            try:
-                orch_mod = importlib.import_module("seslinot.research.orchestrator")
-            except ImportError:
-                try:
-                    orch_mod = importlib.import_module("seslinot.research")
-                except ImportError as exc:
-                    raise RuntimeError(
-                        "seslinot.research modülü yüklü değil ve research_handler enjekte edilmedi"
-                    ) from exc
-
-            if hasattr(orch_mod, "ResearchOrchestrator"):
-                orchestrator = orch_mod.ResearchOrchestrator(self.cfg, self.db)
-                if hasattr(orchestrator, "run_job"):
-                    res = orchestrator.run_job(job, on_phase=on_phase)
-                else:
-                    res = orchestrator.run(job, on_phase=on_phase)
-            elif hasattr(orch_mod, "run_research_job"):
-                res = orch_mod.run_research_job(self.cfg, self.db, job, on_phase=on_phase)
-            else:
-                raise RuntimeError(
-                    "seslinot.research içinde ResearchOrchestrator veya run_research_job bulunamadı"
-                )
-
-            if inspect.isawaitable(res):
-                return await res
-            return res
+            pipeline_mod = importlib.import_module("seslinot.pipeline")
+            pipeline = pipeline_mod.SesliNotPipeline(
+                self.cfg, db=self.db, osd=self.osd, notifier=self.notifier
+            )
+            return await pipeline.execute_research_job(job, on_phase=on_phase)
 
         return _lazy_research
 
@@ -398,9 +369,12 @@ class SesliNotDaemon:
             return VoiceState.IDLE, 0
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            state_str = str(raw.get("voiceState", VoiceState.IDLE.value))
+            state_str = str(
+                raw.get("voiceState") or raw.get("state") or VoiceState.IDLE.value
+            )
             voice_state = VoiceState(state_str)
-            started_at = max(0, int(raw.get("recordingStartedAt", 0) or 0))
+            started_raw = raw.get("recordingStartedAt", raw.get("started_at", 0))
+            started_at = max(0, int(started_raw or 0))
             return voice_state, started_at
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return VoiceState.IDLE, 0
@@ -520,6 +494,9 @@ class SesliNotDaemon:
             self.db.update_job_status(
                 job.job_id,
                 JobStatus.QUEUED,
+                topic=topic,
+                depth=decision.depth,
+                confidence=decision.confidence,
                 phase=ResearchPhase.QUEUED,
                 phase_detail=PHASE_LABELS_TR[ResearchPhase.QUEUED],
                 error_message="",
@@ -532,6 +509,9 @@ class SesliNotDaemon:
             self.db.update_job_status(
                 job.job_id,
                 JobStatus.PENDING_CONFIRM,
+                topic=topic,
+                depth=decision.depth,
+                confidence=decision.confidence,
                 phase=ResearchPhase.QUEUED,
                 phase_detail=decision.reason or "Kullanıcı onayı bekleniyor",
                 notif_id=notif_id,
@@ -542,6 +522,7 @@ class SesliNotDaemon:
             self.db.update_job_status(
                 job.job_id,
                 JobStatus.DISMISSED,
+                confidence=decision.confidence,
                 phase=ResearchPhase.CANCELLED,
                 phase_detail=decision.reason or "Araştırma niyeti saptanmadı",
                 error_message="",

@@ -769,6 +769,7 @@ class ResearchOrchestrator:
             res = await self.runner.run(repair_adapter, req)
             if res.ok and res.output_text.strip():
                 repaired_text = res.output_text.strip()
+                repair_dir.mkdir(parents=True, exist_ok=True)
                 (repair_dir / "repaired_draft.md").write_text(repaired_text, encoding="utf-8")
                 return repaired_text
             return current_draft
