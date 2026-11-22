@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import uuid
 import wave
@@ -20,6 +21,7 @@ from typing import Any
 from seslinot.audio.cues import PipeWireDucker, _atomic_write_json, play_cue
 from seslinot.config import SesliNotConfig
 from seslinot.models import VoiceState
+from seslinot.platform.os_compat import current_platform, popen_isolated_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +45,30 @@ def _is_pid_alive(pid: int | None) -> bool:
     """Verilen PID'in canlı (ve zombie olmayan) bir süreç olup olmadığını denetler."""
     if pid is None or pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+            if not handle:
+                return False
+            try:
+                WAIT_TIMEOUT = 0x00000102
+                return bool(ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    except OSError:
+        return False
 
     stat_path = Path(f"/proc/{pid}/stat")
     if stat_path.is_file():
@@ -146,6 +166,10 @@ class AudioCaptureController:
     def state_path(self) -> Path:
         return self.cfg.paths.capture_state_path
 
+    @property
+    def _stop_flag_path(self) -> Path:
+        return self.cfg.paths.runtime_dir / "capture.stop"
+
     def _load_state(self) -> dict[str, Any] | None:
         if not self.state_path.is_file():
             return None
@@ -160,6 +184,7 @@ class AudioCaptureController:
 
     def _clear_state(self) -> None:
         self.state_path.unlink(missing_ok=True)
+        self._stop_flag_path.unlink(missing_ok=True)
         self._active_proc = None
 
     def _pid_alive(self, pid: int | None) -> bool:
@@ -169,47 +194,77 @@ class AudioCaptureController:
             return self._active_proc.poll() is None
         return _is_pid_alive(pid)
 
-    def _spawn_pw_record(self, part_path: Path) -> subprocess.Popen[bytes]:
-        if not shutil.which("pw-record"):
-            raise CaptureError("pw-record komutu sistem PATH üzerinde bulunamadı.")
+    def _resolve_backend(self) -> str:
+        pref = getattr(self.cfg.audio, "capture_backend", "auto")
+        if pref == "pipewire":
+            return "pipewire"
+        if pref == "sounddevice":
+            return "sounddevice"
+        if current_platform() == "linux" and shutil.which("pw-record"):
+            return "pipewire"
+        return "sounddevice"
 
+    def _spawn_pw_record(self, part_path: Path) -> subprocess.Popen[bytes]:
+        backend = self._resolve_backend()
         part_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            "pw-record",
-            "--rate",
-            str(self.cfg.audio.sample_rate),
-            "--channels",
-            str(self.cfg.audio.channels),
-            "--format",
-            "s16",
-            "--container",
-            "wav",
-            "--media-type",
-            "Audio",
-            "--media-category",
-            "Capture",
-            "--media-role",
-            "Communication",
-            str(part_path),
-        ]
+        self._stop_flag_path.unlink(missing_ok=True)
+
+        if backend == "pipewire":
+            if not shutil.which("pw-record"):
+                raise CaptureError("pw-record komutu sistem PATH üzerinde bulunamadı.")
+            cmd = [
+                "pw-record",
+                "--rate",
+                str(self.cfg.audio.sample_rate),
+                "--channels",
+                str(self.cfg.audio.channels),
+                "--format",
+                "s16",
+                "--container",
+                "wav",
+                "--media-type",
+                "Audio",
+                "--media-category",
+                "Capture",
+                "--media-role",
+                "Communication",
+                str(part_path),
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                "-m",
+                "seslinot.audio._sd_record",
+                str(part_path),
+                str(self.cfg.audio.sample_rate),
+                str(self.cfg.audio.channels),
+                str(self._stop_flag_path),
+            ]
+
         try:
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,
+                **popen_isolated_kwargs(),
             )
         except OSError as exc:
-            raise CaptureError(f"pw-record başlatılamadı: {exc}") from exc
+            raise CaptureError(f"Ses kayıt süreci ({backend}) başlatılamadı: {exc}") from exc
 
         self._active_proc = proc
         return proc
 
     def _stop_recorder(self, pid: int | None, timeout: float = 3.0) -> None:
-        """Aktif pw-record sürecine SIGINT gönderip WAV başlığını temiz kapatmasını bekler."""
+        """Aktif kayıt sürecini temiz durdurup WAV başlığını kapatmasını bekler."""
         if pid is None:
             return
+
+        try:
+            self._stop_flag_path.parent.mkdir(parents=True, exist_ok=True)
+            self._stop_flag_path.write_text("stop\n", encoding="utf-8")
+        except OSError:
+            pass
 
         managed_proc = (
             self._active_proc
@@ -221,15 +276,16 @@ class AudioCaptureController:
             if managed_proc.poll() is not None:
                 self._active_proc = None
                 return
-            try:
-                managed_proc.send_signal(signal.SIGINT)
-            except ProcessLookupError:
-                self._active_proc = None
-                return
+            if os.name != "nt":
+                try:
+                    managed_proc.send_signal(signal.SIGINT)
+                except ProcessLookupError:
+                    self._active_proc = None
+                    return
             try:
                 managed_proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                logger.warning("pw-record (PID %s) SIGINT sonrası kapanmadı, SIGTERM gönderiliyor.", pid)
+                logger.warning("Kayıt süreci (PID %s) temiz kapanmadı, terminate gönderiliyor.", pid)
                 managed_proc.terminate()
                 try:
                     managed_proc.wait(timeout=1.0)
@@ -242,10 +298,11 @@ class AudioCaptureController:
         if not _is_pid_alive(pid):
             return
 
-        try:
-            os.kill(pid, signal.SIGINT)
-        except ProcessLookupError:
-            return
+        if os.name != "nt":
+            try:
+                os.kill(pid, signal.SIGINT)
+            except ProcessLookupError:
+                return
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -253,10 +310,10 @@ class AudioCaptureController:
                 return
             time.sleep(0.025)
 
-        logger.warning("pw-record (PID %s) SIGINT sonrası kapanmadı, SIGTERM gönderiliyor.", pid)
+        logger.warning("Kayıt süreci (PID %s) temiz kapanmadı, sonlandırılıyor.", pid)
         try:
             os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, OSError):
             return
 
         term_deadline = time.monotonic() + 1.0
@@ -265,9 +322,10 @@ class AudioCaptureController:
                 return
             time.sleep(0.025)
 
+        sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
         try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
+            os.kill(pid, sigkill)
+        except (ProcessLookupError, OSError):
             pass
 
     def start(self) -> dict[str, Any]:

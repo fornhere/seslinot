@@ -276,6 +276,14 @@ class OmarchyNotifier:
         safe_replaces_id = max(0, int(replaces_id))
         safe_timeout = int(timeout_ms)
 
+        from seslinot.platform.os_compat import current_platform
+
+        plat = current_platform()
+        if plat == "macos":
+            return self._send_via_macos(summary=summary, body=body)
+        if plat == "windows":
+            return self._send_via_windows(summary=summary, body=body)
+
         dbus_id = self._send_via_dbus(
             summary=summary,
             body=body,
@@ -312,6 +320,56 @@ class OmarchyNotifier:
             timeout_ms=safe_timeout,
             transient=transient,
         )
+
+    def _send_via_macos(self, *, summary: str, body: str) -> int:
+        tn = shutil.which("terminal-notifier")
+        if tn:
+            cmd = [tn, "-title", self.cfg.desktop.app_name, "-subtitle", summary, "-message", body or summary]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0, check=False)
+                return 1 if proc.returncode == 0 else 0
+            except (OSError, subprocess.SubprocessError):
+                return 0
+        osa = shutil.which("osascript")
+        if not osa:
+            return 0
+        esc_title = summary.replace("\\", "\\\\").replace('"', '\\"')
+        esc_body = (body or summary).replace("\\", "\\\\").replace('"', '\\"')
+        script = f'display notification "{esc_body}" with title "{self.cfg.desktop.app_name}" subtitle "{esc_title}"'
+        try:
+            proc = subprocess.run([osa, "-e", script], capture_output=True, text=True, timeout=5.0, check=False)
+            return 1 if proc.returncode == 0 else 0
+        except (OSError, subprocess.SubprocessError):
+            return 0
+
+    def _send_via_windows(self, *, summary: str, body: str) -> int:
+        pwsh = shutil.which("powershell") or shutil.which("pwsh")
+        if not pwsh:
+            return 0
+        from xml.sax.saxutils import escape as _xml_escape
+
+        t_xml = _xml_escape(summary)
+        b_xml = _xml_escape(body or "")
+        app_xml = _xml_escape(self.cfg.desktop.app_name)
+        ps_script = (
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null;"
+            "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null;"
+            f"$xml = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+            f"$xml.LoadXml('<toast><visual><binding template=\"ToastText02\"><text id=\"1\">{t_xml}</text><text id=\"2\">{b_xml}</text></binding></visual></toast>');"
+            f"$toast = [Windows.UI.Notifications.ToastNotification]::new($xml);"
+            f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{app_xml}').Show($toast);"
+        )
+        try:
+            proc = subprocess.run(
+                [pwsh, "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=8.0,
+                check=False,
+            )
+            return 1 if proc.returncode == 0 else 0
+        except (OSError, subprocess.SubprocessError):
+            return 0
 
     def _build_dbus_hints(
         self,
@@ -756,3 +814,7 @@ def _parse_notif_id(stdout: str) -> int:
         return max(0, int(token))
     except ValueError:
         return 0
+
+
+DesktopNotifier = OmarchyNotifier
+

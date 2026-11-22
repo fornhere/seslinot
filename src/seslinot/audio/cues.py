@@ -175,8 +175,26 @@ def play_cue(
     vol = max(0.0, min(1.0, float(cfg.audio.cue_volume)))
     should_block = (kind == "start") if blocking is None else blocking
 
+    from seslinot.platform.os_compat import current_platform, popen_isolated_kwargs
+
+    plat = current_platform()
+    if plat == "windows":
+        try:
+            import winsound  # type: ignore[import-not-found]
+
+            flags = winsound.SND_FILENAME | (0 if should_block else winsound.SND_ASYNC)
+            winsound.PlaySound(str(wav_path), flags)
+            if should_block and kind == "start" and START_CUE_SETTLE_SECS > 0:
+                time.sleep(START_CUE_SETTLE_SECS)
+            return True
+        except Exception as exc:
+            logger.debug("Windows winsound cue oynatılamadı (%s): %s", kind, exc)
+            return False
+
     cmd: list[str] | None = None
-    if shutil.which("pw-play"):
+    if plat == "macos" and shutil.which("afplay"):
+        cmd = ["afplay", "-v", f"{vol:.2f}", str(wav_path)]
+    elif shutil.which("pw-play"):
         cmd = [
             "pw-play",
             "--volume",
@@ -217,7 +235,7 @@ def play_cue(
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,
+                **popen_isolated_kwargs(),
             )
         return True
     except (OSError, subprocess.SubprocessError) as exc:

@@ -475,6 +475,8 @@ class IntentRouter:
             return await self._run_gemini_http(prompt)
         if backend == "anthropic_http":
             return await self._run_anthropic_http(prompt)
+        if backend in ("openai_http", "api"):
+            return await self._run_openai_http(prompt)
         raise ValueError(f"Bilinmeyen router backend: {backend}")
 
     async def _run_subprocess(
@@ -651,3 +653,42 @@ class IntentRouter:
             raise RuntimeError(f"HTTP {resp.status_code}")
 
         return parse_route_decision(resp.text, backend_used="anthropic_http")
+
+    async def _run_openai_http(self, prompt: str) -> RouteDecision:
+        if self.cfg.research.api_provider == "anthropic" and os.environ.get("ANTHROPIC_API_KEY"):
+            return await self._run_anthropic_http(prompt)
+
+        key_env = self.cfg.research.api_key_env or "OPENAI_API_KEY"
+        api_key = os.environ.get(key_env, "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
+        base = self.cfg.research.api_base_url.rstrip("/") or "https://api.openai.com/v1"
+        if not api_key and not base.startswith(("http://127.0.0.1", "http://localhost")):
+            raise RuntimeError(f"{key_env} tanımlı değil")
+
+        url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        body = {
+            "model": self.cfg.research.api_model or "gpt-4o-mini",
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.cfg.router.timeout_secs) as client:
+                resp = await client.post(url, headers=headers, json=body)
+        except httpx.HTTPError as exc:
+            raise RouterTransientError(f"HTTP bağlantı hatası: {type(exc).__name__}") from exc
+
+        if resp.status_code in (429, 500, 502, 503, 504):
+            raise RouterTransientError(f"HTTP {resp.status_code}")
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code}")
+
+        payload = resp.json()
+        content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return parse_route_decision(str(content), backend_used="openai_http")
+

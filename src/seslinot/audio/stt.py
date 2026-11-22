@@ -264,8 +264,36 @@ def parse_voxtype_stdout(stdout: str) -> str:
     return " ".join(kept).strip()
 
 
+def resolve_stt_target(cfg: SesliNotConfig) -> tuple[str, str, dict[str, str]]:
+    """Yapılandırmaya göre STT uç noktasını, model adını ve yetkilendirme başlığını çözer."""
+    import os as _os
+
+    provider = getattr(cfg.audio, "stt_provider", "local")
+    endpoint = cfg.audio.stt_endpoint
+    model = cfg.audio.stt_model
+    api_key_env = getattr(cfg.audio, "stt_api_key_env", "")
+
+    if provider == "groq":
+        if "127.0.0.1" in endpoint or "localhost" in endpoint:
+            endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+        if model == "whisper-1":
+            model = "whisper-large-v3-turbo"
+        api_key_env = api_key_env or "GROQ_API_KEY"
+    elif provider == "openai":
+        if "127.0.0.1" in endpoint or "localhost" in endpoint:
+            endpoint = "https://api.openai.com/v1/audio/transcriptions"
+        api_key_env = api_key_env or "OPENAI_API_KEY"
+
+    headers: dict[str, str] = {}
+    if api_key_env:
+        token = _os.environ.get(api_key_env, "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+    return endpoint, model, headers
+
+
 class STTClient:
-    """VAD + yerel OpenAI-uyumlu Whisper HTTP STT istemcisi (Voxtype CLI yedekli)."""
+    """VAD + yerel veya bulut (Groq/OpenAI) OpenAI-uyumlu Whisper HTTP STT istemcisi."""
 
     def __init__(
         self,
@@ -283,20 +311,20 @@ class STTClient:
         *,
         temperature: float,
     ) -> str:
+        endpoint, model, headers = resolve_stt_target(self.cfg)
         audio_bytes = chunk_path.read_bytes()
         files = {"file": (chunk_path.name, audio_bytes, "audio/wav")}
         data = {
-            "model": self.cfg.audio.stt_model,
+            "model": model,
             "language": self.cfg.audio.language,
             "prompt": self.cfg.audio.initial_prompt,
             "temperature": f"{temperature:.1f}",
             "response_format": "json",
         }
-        resp = client.post(
-            self.cfg.audio.stt_endpoint,
-            files=files,
-            data=data,
-        )
+        post_kwargs: dict[str, object] = {"files": files, "data": data}
+        if headers:
+            post_kwargs["headers"] = headers
+        resp = client.post(endpoint, **post_kwargs)  # type: ignore[arg-type]
         if resp.status_code >= 500:
             raise httpx.HTTPStatusError(
                 f"STT sunucusu {resp.status_code} hatası döndürdü",

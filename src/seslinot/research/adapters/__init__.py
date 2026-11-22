@@ -17,12 +17,14 @@ from seslinot.research.adapters.base import (
 )
 from seslinot.research.adapters.claude import ClaudeAdapter
 from seslinot.research.adapters.codex import CodexAdapter
+from seslinot.research.adapters.direct_api import DirectApiAdapter
 from seslinot.research.adapters.opencode import OpenCodeAdapter
 
 __all__ = [
     "AgyAdapter",
     "ClaudeAdapter",
     "CodexAdapter",
+    "DirectApiAdapter",
     "OpenCodeAdapter",
     "WorkerAdapter",
     "WorkerRequest",
