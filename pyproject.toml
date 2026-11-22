@@ -4,10 +4,40 @@ build-backend = "hatchling.build"
 
 [project]
 name = "seslinot"
-version = "0.1.0"
-description = "Yerel GPU sesli not yakalama ve çok-ajanlı derin araştırma sistemi (Obsidian / Hafıza OS uyumlu)"
+version = "0.2.0"
+description = "Linux, macOS ve Windows için sesli not yakalama ve doğrulanmış kaynaklı çok-ajanlı derin araştırma sistemi (Obsidian & opsiyonel Hafıza OS uyumlu)"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12"
+authors = [
+    { name = "Forn", email = "178168387+fornhere@users.noreply.github.com" },
+]
+keywords = [
+    "obsidian",
+    "voice-notes",
+    "whisper",
+    "deep-research",
+    "multi-agent",
+    "ai-agents",
+    "turkish",
+    "omarchy",
+    "hyprland",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: News/Diary",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "pydantic>=2.9.0",
     "httpx>=0.27.2",
@@ -16,6 +46,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+desktop = [
+    "sounddevice>=0.5.0",
+    "pystray>=0.19.5",
+    "pillow>=10.0.0",
+    "pynput>=1.7.7",
+]
 vad = [
     "onnxruntime>=1.19.0",
     "numpy>=2.0.0",
@@ -24,6 +60,11 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/fornhere/seslinot"
+Repository = "https://github.com/fornhere/seslinot"
+Issues = "https://github.com/fornhere/seslinot/issues"
 
 [project.scripts]
 seslinot = "seslinot.cli:main"
