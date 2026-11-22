@@ -90,6 +90,8 @@ def canonicalize_url(url: str) -> str:
         return raw
 
     hostname = parsed.hostname.lower().rstrip(".")
+    if hostname.startswith("www.") and hostname.count(".") >= 2:
+        hostname = hostname[4:]
     if ":" in hostname:  # IPv6 literal
         host_part = f"[{hostname}]"
     else:

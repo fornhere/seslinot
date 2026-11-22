@@ -59,6 +59,10 @@ class ResearchExecutionResult:
     source_count: int = 0
     session_dir: str = ""
     unit_name: str = ""
+    awaiting_approval: bool = False
+    preview_path: str = ""
+    summary: str = ""
+    confidence_label: str = "orta"
 
 
 @dataclass
@@ -205,6 +209,10 @@ def _normalize_execution_result(
             source_count=raw.source_count,
             session_dir=raw.session_dir,
             unit_name=raw.unit_name,
+            awaiting_approval=raw.awaiting_approval,
+            preview_path=raw.preview_path,
+            summary=raw.summary,
+            confidence_label=raw.confidence_label,
         )
     elif isinstance(raw, dict):
         res = ResearchExecutionResult(
@@ -213,6 +221,10 @@ def _normalize_execution_result(
             source_count=int(raw.get("source_count", 0) or 0),
             session_dir=str(raw.get("session_dir", "") or ""),
             unit_name=str(raw.get("unit_name", "") or ""),
+            awaiting_approval=bool(raw.get("awaiting_approval", False)),
+            preview_path=str(raw.get("preview_path", "") or ""),
+            summary=str(raw.get("summary", "") or ""),
+            confidence_label=str(raw.get("confidence_label", "orta") or "orta"),
         )
     else:
         res = ResearchExecutionResult(
@@ -221,6 +233,10 @@ def _normalize_execution_result(
             source_count=int(getattr(raw, "source_count", 0) or 0),
             session_dir=str(getattr(raw, "session_dir", "") or ""),
             unit_name=str(getattr(raw, "unit_name", "") or ""),
+            awaiting_approval=bool(getattr(raw, "awaiting_approval", False)),
+            preview_path=str(getattr(raw, "preview_path", "") or ""),
+            summary=str(getattr(raw, "summary", "") or ""),
+            confidence_label=str(getattr(raw, "confidence_label", "orta") or "orta"),
         )
 
     if not res.obsidian_uri and res.report_rel_path:
@@ -640,6 +656,39 @@ class SesliNotDaemon:
             result = _normalize_execution_result(
                 raw_result, vault_name=self.cfg.vault.vault_name
             )
+            if result.awaiting_approval:
+                notif_id = self.notifier.notify_research_ready_for_approval(
+                    current_notif_id,
+                    job.job_id,
+                    job.topic,
+                    result.preview_path,
+                    result.source_count,
+                    result.confidence_label,
+                )
+                self.db.update_job_status(
+                    job.job_id,
+                    JobStatus.AWAITING_APPROVAL,
+                    phase=ResearchPhase.AWAITING_APPROVAL,
+                    phase_detail=PHASE_LABELS_TR[ResearchPhase.AWAITING_APPROVAL],
+                    source_count=result.source_count,
+                    session_dir=result.session_dir or job.session_dir,
+                    unit_name=result.unit_name or job.unit_name,
+                    notif_id=notif_id or current_notif_id,
+                    error_message="",
+                )
+                self.db.record_event(
+                    job.job_id,
+                    ResearchPhase.AWAITING_APPROVAL.value,
+                    PHASE_LABELS_TR[ResearchPhase.AWAITING_APPROVAL],
+                    payload={
+                        "preview_path": result.preview_path,
+                        "source_count": result.source_count,
+                        "confidence": result.confidence_label,
+                    },
+                )
+                self.sync_desktop_state(force=True)
+                return
+
             self.db.update_job_status(
                 job.job_id,
                 JobStatus.SUCCEEDED,

@@ -131,7 +131,7 @@ class AudioConfig(BaseModel):
 class RouterConfig(BaseModel):
     auto_start_threshold: float = 0.80
     confirm_threshold: float = 0.55
-    backends: list[str] = Field(default_factory=lambda: ["agy", "claude", "codex"])
+    backends: list[str] = Field(default_factory=lambda: ["claude", "agy", "codex"])
     agy_model: str = "gemini-3.8-flash-low"
     claude_model: str = "haiku"
     codex_model: str = "gpt-6-luna"
@@ -161,6 +161,7 @@ class ResearchConfig(BaseModel):
     default_freshness_months: int = 3
     fetch_concurrency: int = 8
     fetch_timeout_secs: float = 10.0
+    require_save_approval: bool = True
 
 
 class DesktopConfig(BaseModel):

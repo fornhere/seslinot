@@ -35,6 +35,7 @@ Panel {
   property int recordingStartedAt: 0
   property var activeSessions: []
   property var pendingConfirm: []
+  property var pendingApproval: []
   property int queuedOfflineCount: 0
   property var recentReports: []
 
@@ -46,12 +47,13 @@ Panel {
   readonly property bool isRecording: voiceState === "recording"
   readonly property bool isTranscribing: voiceState === "transcribing"
   readonly property bool isPaused: voiceState === "paused"
-  readonly property bool hasActivity: isRecording || isTranscribing || isPaused || activeSessions.length > 0 || pendingConfirm.length > 0
+  readonly property bool hasActivity: isRecording || isTranscribing || isPaused || activeSessions.length > 0 || pendingConfirm.length > 0 || pendingApproval.length > 0
 
   readonly property string barGlyph: {
     if (isRecording) return "󰍬"
     if (isPaused) return "󰏤"
     if (isTranscribing) return "󰔟"
+    if (pendingApproval.length > 0) return "󰄱"
     if (activeSessions.length > 0) return "󰖟"
     if (pendingConfirm.length > 0) return "󰋗"
     return "󰍬"
@@ -59,6 +61,7 @@ Panel {
 
   readonly property string barLabel: {
     if (isRecording && recordingStartedAt > 0) return formatElapsed(recordingStartedAt)
+    if (pendingApproval.length > 0) return String(pendingApproval.length)
     if (activeSessions.length > 0) return String(activeSessions.length)
     if (pendingConfirm.length > 0) return String(pendingConfirm.length)
     return ""
@@ -66,7 +69,7 @@ Panel {
 
   readonly property color barTintColor: {
     if (isRecording) return urgent
-    if (isTranscribing || activeSessions.length > 0 || pendingConfirm.length > 0) return accent
+    if (isTranscribing || pendingApproval.length > 0 || activeSessions.length > 0 || pendingConfirm.length > 0) return accent
     return Qt.darker(barForeground, 1.35)
   }
 
@@ -80,6 +83,9 @@ Panel {
   readonly property var navItems: {
     var list = []
     var i
+    for (i = 0; i < pendingApproval.length; i++) {
+      list.push({ kind: "approval", item: pendingApproval[i] })
+    }
     for (i = 0; i < pendingConfirm.length; i++) {
       list.push({ kind: "confirm", item: pendingConfirm[i] })
     }
@@ -113,6 +119,12 @@ Panel {
     return uri.indexOf("obsidian://open?") === 0
   }
 
+  function isSafePreviewPath(p) {
+    if (typeof p !== "string" || p.length === 0 || p.length > 4096) return false
+    if (/[\x00-\x1f\x7f-\x9f]/.test(p)) return false
+    return p.indexOf("/") === 0 && p.indexOf("..") === -1 && p.slice(-3) === ".md"
+  }
+
   function confirmJob(jobId) {
     var clean = sanitizeJobId(jobId)
     if (!clean) return
@@ -131,6 +143,23 @@ Panel {
     Quickshell.execDetached(["seslinot-ctl", "cancel", clean])
   }
 
+  function approveReport(jobId) {
+    var clean = sanitizeJobId(jobId)
+    if (!clean) return
+    Quickshell.execDetached(["seslinot-ctl", "approve-report", clean])
+  }
+
+  function rejectReport(jobId) {
+    var clean = sanitizeJobId(jobId)
+    if (!clean) return
+    Quickshell.execDetached(["seslinot-ctl", "reject-report", clean])
+  }
+
+  function openPreviewPath(previewPath) {
+    if (!isSafePreviewPath(previewPath)) return
+    Quickshell.execDetached(["xdg-open", previewPath])
+  }
+
   function toggleRecording() {
     Quickshell.execDetached(["seslinot", "record", "toggle"])
   }
@@ -146,6 +175,7 @@ Panel {
     recordingStartedAt = 0
     activeSessions = []
     pendingConfirm = []
+    pendingApproval = []
     queuedOfflineCount = 0
     recentReports = []
     clampSelection()
@@ -167,6 +197,7 @@ Panel {
       recordingStartedAt = Number(parsed.recordingStartedAt || 0) || 0
       activeSessions = Array.isArray(parsed.activeSessions) ? parsed.activeSessions : []
       pendingConfirm = Array.isArray(parsed.pendingConfirm) ? parsed.pendingConfirm : []
+      pendingApproval = Array.isArray(parsed.pendingApproval) ? parsed.pendingApproval : []
       queuedOfflineCount = Math.max(0, Number(parsed.queuedOfflineCount || 0) || 0)
       recentReports = Array.isArray(parsed.recentReports) ? parsed.recentReports : []
       nowEpoch = Math.floor(Date.now() / 1000)
@@ -207,7 +238,9 @@ Panel {
     if (selectedIndex < 0 || selectedIndex >= navItems.length) return
     var entry = navItems[selectedIndex]
     if (!entry || !entry.item) return
-    if (entry.kind === "confirm") {
+    if (entry.kind === "approval") {
+      openPreviewPath(entry.item.previewPath)
+    } else if (entry.kind === "confirm") {
       confirmJob(entry.item.id)
     } else if (entry.kind === "report") {
       openObsidianUri(entry.item.obsidianUri)
@@ -219,7 +252,9 @@ Panel {
     if (selectedIndex < 0 || selectedIndex >= navItems.length) return
     var entry = navItems[selectedIndex]
     if (!entry || !entry.item) return
-    if (entry.kind === "confirm") {
+    if (entry.kind === "approval") {
+      rejectReport(entry.item.id)
+    } else if (entry.kind === "confirm") {
       dismissJob(entry.item.id)
     } else if (entry.kind === "active") {
       cancelJob(entry.item.id)
@@ -412,6 +447,119 @@ Panel {
             }
           }
 
+          // --- Kayıt Onayı Bekleyen Raporlar ---
+          PanelSeparator {
+            visible: root.pendingApproval.length > 0
+            foreground: root.foreground
+          }
+
+          PanelSectionHeader {
+            visible: root.pendingApproval.length > 0
+            width: parent.width
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            text: "KAYIT ONAYI BEKLEYEN RAPORLAR (" + root.pendingApproval.length + ")"
+          }
+
+          Repeater {
+            model: root.pendingApproval
+
+            CursorSurface {
+              id: approvalRow
+              required property var modelData
+              required property int index
+
+              readonly property int flatIdx: index
+              width: column.width
+              implicitHeight: approvalInner.implicitHeight + Style.spacing.md * 2
+              foreground: root.foreground
+              accent: root.accent
+              hasCursor: root.cursorActive && root.selectedIndex === flatIdx
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onEntered: {
+                  root.cursorActive = true
+                  root.selectedIndex = approvalRow.flatIdx
+                }
+                onClicked: root.openPreviewPath(approvalRow.modelData.previewPath)
+              }
+
+              RowLayout {
+                id: approvalInner
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.margins: Style.spacing.md
+                spacing: Style.spacing.sm
+
+                Column {
+                  Layout.fillWidth: true
+                  spacing: Style.spacing.xxs
+
+                  Text {
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: String(approvalRow.modelData.title || "Araştırma raporu")
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    color: root.foreground
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    visible: String(approvalRow.modelData.summary || "").length > 0
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: String(approvalRow.modelData.summary || "")
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.foreground
+                    elide: Text.ElideRight
+                    maximumLineCount: 2
+                    wrapMode: Text.WordWrap
+                  }
+
+                  Text {
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: Number(approvalRow.modelData.sourceCount || 0) + " kaynak · güven: " + String(approvalRow.modelData.confidence || "orta")
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.accent
+                    elide: Text.ElideRight
+                  }
+                }
+
+                PanelActionButton {
+                  iconText: "󰈈"
+                  tooltipText: "Raporu önizle"
+                  foreground: root.foreground
+                  hoverColor: root.accent
+                  onClicked: root.openPreviewPath(approvalRow.modelData.previewPath)
+                }
+
+                PanelActionButton {
+                  iconText: "󰄬"
+                  tooltipText: "Kasaya kaydet"
+                  foreground: root.accent
+                  hoverColor: root.accent
+                  onClicked: root.approveReport(approvalRow.modelData.id)
+                }
+
+                PanelActionButton {
+                  iconText: "󰅖"
+                  tooltipText: "Kaydetme (reddet)"
+                  foreground: root.dim
+                  hoverColor: root.urgent
+                  onClicked: root.rejectReport(approvalRow.modelData.id)
+                }
+              }
+            }
+          }
+
           // --- Onay Bekleyen Araştırmalar ---
           PanelSeparator {
             visible: root.pendingConfirm.length > 0
@@ -434,7 +582,7 @@ Panel {
               required property var modelData
               required property int index
 
-              readonly property int flatIdx: index
+              readonly property int flatIdx: root.pendingApproval.length + index
               width: column.width
               implicitHeight: confirmInner.implicitHeight + Style.spacing.md * 2
               foreground: root.foreground
@@ -526,7 +674,7 @@ Panel {
               required property var modelData
               required property int index
 
-              readonly property int flatIdx: root.pendingConfirm.length + index
+              readonly property int flatIdx: root.pendingApproval.length + root.pendingConfirm.length + index
               width: column.width
               implicitHeight: activeInner.implicitHeight + Style.spacing.md * 2
               foreground: root.foreground
@@ -609,7 +757,7 @@ Panel {
               required property var modelData
               required property int index
 
-              readonly property int flatIdx: root.pendingConfirm.length + root.activeSessions.length + index
+              readonly property int flatIdx: root.pendingApproval.length + root.pendingConfirm.length + root.activeSessions.length + index
               width: column.width
               implicitHeight: reportInner.implicitHeight + Style.spacing.md * 2
               foreground: root.foreground
@@ -672,7 +820,7 @@ Panel {
 
           // --- Boş durum ---
           Text {
-            visible: root.pendingConfirm.length === 0 && root.activeSessions.length === 0 && root.recentReports.length === 0 && root.queuedOfflineCount === 0
+            visible: root.pendingApproval.length === 0 && root.pendingConfirm.length === 0 && root.activeSessions.length === 0 && root.recentReports.length === 0 && root.queuedOfflineCount === 0
             width: parent.width
             topPadding: Style.spacing.md
             bottomPadding: Style.spacing.md

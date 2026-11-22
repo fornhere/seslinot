@@ -25,7 +25,7 @@ from seslinot.research.adapters.base import (
 from seslinot.research.runner import ProcessRunner
 from seslinot.research.verifier import audit_draft_citations, strip_llm_bibliography
 
-_CITATION_ID_RE = re.compile(r"\[\^([SV]\d+)\](?!:)")
+_CITATION_ID_RE = re.compile(r"\[\^([SV]\d+)\]")
 _SENTENCE_SPLIT_RE = re.compile(r"([.!?]+(?:[\"')\]]|\s*\[\^[A-Za-z0-9_-]+\])*)\s+")
 _RAW_URL_RE = re.compile(r"https?://[^\s\)\]>\"'`]+", re.IGNORECASE)
 

@@ -296,11 +296,50 @@ async def test_full_end_to_end_voice_to_verified_research_in_vault(tmp_path: Pat
     assert tick.dispatched_jobs == 1
     await daemon.wait_for_active_tasks(timeout=15.0)
 
-    # 3. Araştırma raporu doğrulanmış kaynaklarla kasaya yazılmış olmalı
+    # 3. Varsayılan onay kapısı: araştırma bitince kasa henüz kirlenmeden AWAITING_APPROVAL bekler
+    job = pipeline.db.get_job(ingest["job"].job_id)
+    assert job is not None
+    assert job.status == JobStatus.AWAITING_APPROVAL
+    assert job.phase == ResearchPhase.AWAITING_APPROVAL
+    assert job.topic == "PipeWire düşük gecikme ayarları"
+    assert job.source_count == 2
+    assert job.report_rel_path == ""
+
+    # Kasada araştırmalar altında henüz hiçbir rapor dosyası oluşturulmamış olmalı
+    research_dir = cfg.vault.path / "araştırmalar"
+    dated_reports_before = [
+        p for p in research_dir.rglob("*.md")
+        if p.name not in {"README.md", "Araştırma Haritası.md"}
+    ]
+    assert dated_reports_before == []
+
+    # Sesli not da henüz 'araştırıldı' olarak güncellenmemiş olmalı
+    assert "durum: araştırıldı" not in voice_abs.read_text(encoding="utf-8")
+
+    # Önizleme ve staging dosyaları oturum dizininde hazır olmalı
+    sess_dir = Path(job.session_dir)
+    preview_file = sess_dir / "preview.md"
+    assert preview_file.is_file()
+    assert (sess_dir / "pending_report.json").is_file()
+    assert "[ONAY BEKLİYOR]" in preview_file.read_text(encoding="utf-8")
+
+    # state.json'da pendingApproval dolu, recentReports henüz boş olmalı
+    state_before = json.loads(cfg.paths.state_json_path.read_text(encoding="utf-8"))
+    assert len(state_before["pendingApproval"]) == 1
+    assert state_before["pendingApproval"][0]["id"] == job.job_id
+    assert state_before["pendingApproval"][0]["previewPath"] == str(preview_file)
+    assert state_before["pendingApproval"][0]["sourceCount"] == 2
+    assert state_before["recentReports"] == []
+
+    # 4. Kullanıcı onaylar -> rapor kasaya atomik yazılır ve sesli not bağlanır
+    approved = pipeline.approve_pending_report(job.job_id)
+    assert approved is not None
+    assert approved.report_rel_path.startswith("araştırmalar/")
+
     job = pipeline.db.get_job(ingest["job"].job_id)
     assert job is not None
     assert job.status == JobStatus.SUCCEEDED
-    assert job.topic == "PipeWire düşük gecikme ayarları"
+    assert job.phase == ResearchPhase.COMPLETED
     assert job.source_count == 2
     assert job.obsidian_uri.startswith("obsidian://open?vault=Haf%C4%B1za")
 
@@ -311,20 +350,86 @@ async def test_full_end_to_end_voice_to_verified_research_in_vault(tmp_path: Pat
     assert "https://docs.pipewire.org/page_man_pipewire_conf_5.html" in report_text
     assert "denetim_durumu: passed" in report_text
 
-    # 4. Sesli not hash-güvenli biçimde araştırmaya bağlanmış olmalı
+    # 5. Sesli not hash-güvenli biçimde araştırmaya bağlanmış olmalı
     updated_voice = voice_abs.read_text(encoding="utf-8")
     assert "durum: araştırıldı" in updated_voice
     assert job.report_rel_path.removesuffix(".md") in updated_voice
 
-    # 5. Desktop state.json son raporu ve Obsidian URI'yi yansıtmalı
+    # 6. Desktop state.json pendingApproval'ı boşaltıp son raporu yansıtmalı
     state_json = json.loads(cfg.paths.state_json_path.read_text(encoding="utf-8"))
+    assert state_json["pendingApproval"] == []
     assert len(state_json["recentReports"]) == 1
     assert state_json["recentReports"][0]["sourceCount"] == 2
 
-    # 6. Haritalar ve .base dosyaları oluşturulmuş olmalı
+    # 7. Haritalar ve .base dosyaları oluşturulmuş olmalı
     assert (cfg.vault.path / "sesli-notlar" / "Sesli Notlar.base").is_file()
     assert (cfg.vault.path / "araştırmalar" / "Araştırmalar.base").is_file()
     assert (cfg.vault.path / "araştırmalar" / "Araştırma Haritası.md").is_file()
+
+
+@pytest.mark.asyncio
+async def test_research_approval_gate_reject_leaves_vault_clean(tmp_path: Path) -> None:
+    """Kullanıcı raporu reddettiğinde kasaya hiçbir rapor yazılmaz ve sesli not değişmez."""
+    cfg = _make_isolated_cfg(tmp_path)
+    wav = _write_test_wav(tmp_path / "reject_sample.wav")
+
+    pipeline = SesliNotPipeline(
+        cfg,
+        stt_client=_StubSTT("PipeWire düşük gecikme ayarlarını derinlemesine araştır."),
+        router=_StubRouter(),
+        adapter_factory=lambda name: _FakeAdapter(name),
+        runner=_FakeRunner(),
+        fetcher=_fake_fetcher,
+    )
+    ingest = await pipeline.ingest_wav(wav, run_stage2_inline=False)
+    voice_abs = cfg.vault.path / ingest["vault_rel_path"]
+    voice_before = voice_abs.read_text(encoding="utf-8")
+
+    daemon = SesliNotDaemon(
+        cfg,
+        db=pipeline.db,
+        osd=pipeline.osd,
+        notifier=pipeline.notifier,
+        route_handler=pipeline.route_job,
+        research_handler=pipeline.execute_research_job,
+        network_checker=lambda: True,
+    )
+    await daemon.run_once()
+    await daemon.wait_for_active_tasks(timeout=15.0)
+
+    job_id = ingest["job"].job_id
+    job = pipeline.db.get_job(job_id)
+    assert job is not None
+    assert job.status == JobStatus.AWAITING_APPROVAL
+
+    # Kullanıcı reddeder
+    assert pipeline.reject_pending_report(job_id) is True
+    # İkinci kez reddetme False döner
+    assert pipeline.reject_pending_report(job_id) is False
+    # Reddedilmiş rapor onaylanamaz
+    assert pipeline.approve_pending_report(job_id) is None
+
+    final_job = pipeline.db.get_job(job_id)
+    assert final_job is not None
+    assert final_job.status == JobStatus.REJECTED
+    assert final_job.report_rel_path == ""
+
+    # Kasada hiç araştırma raporu yazılmamış olmalı
+    research_dir = cfg.vault.path / "araştırmalar"
+    dated_reports = [
+        p for p in research_dir.rglob("*.md")
+        if p.name not in {"README.md", "Araştırma Haritası.md"}
+    ]
+    assert dated_reports == []
+
+    # Sesli not dokunulmamış olmalı
+    assert voice_abs.read_text(encoding="utf-8") == voice_before
+
+    # state.json hem pendingApproval hem recentReports boş olmalı
+    state_after = json.loads(cfg.paths.state_json_path.read_text(encoding="utf-8"))
+    assert state_after["pendingApproval"] == []
+    assert state_after["recentReports"] == []
+
 
 
 def test_cli_note_status_doctor_and_ctl(tmp_path: Path, capsys) -> None:

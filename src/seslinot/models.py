@@ -42,7 +42,9 @@ class JobStatus(StrEnum):
     QUEUED_OFFLINE = "QUEUED_OFFLINE"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
     SUCCEEDED = "SUCCEEDED"
+    REJECTED = "REJECTED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
     DISMISSED = "DISMISSED"
@@ -57,6 +59,7 @@ class ResearchPhase(StrEnum):
     VERIFYING = "verifying"
     SYNTHESIZING = "synthesizing"
     AUDITING = "auditing"
+    AWAITING_APPROVAL = "awaiting_approval"
     WRITING = "writing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -71,6 +74,7 @@ PHASE_LABELS_TR: dict[str, str] = {
     ResearchPhase.VERIFYING: "Kaynaklar ve alıntılar doğrulanıyor",
     ResearchPhase.SYNTHESIZING: "Türkçe rapor sentezleniyor",
     ResearchPhase.AUDITING: "Bağımsız atıf denetimi yapılıyor",
+    ResearchPhase.AWAITING_APPROVAL: "Kasaya kayıt için onayınız bekleniyor",
     ResearchPhase.WRITING: "Hafıza kasasına yazılıyor",
     ResearchPhase.COMPLETED: "Tamamlandı",
     ResearchPhase.FAILED: "Hata oluştu",
@@ -349,6 +353,18 @@ class PendingConfirmItem(BaseModel):
     createdAt: int
 
 
+class PendingApprovalItem(BaseModel):
+    id: str
+    title: str
+    summary: str = ""
+    previewPath: str = ""
+    sourceCount: int = 0
+    verifiedQuotes: int = 0
+    confidence: str = "orta"
+    auditStatus: str = "passed"
+    createdAt: int = 0
+
+
 class RecentReportItem(BaseModel):
     id: str
     title: str
@@ -362,5 +378,6 @@ class DesktopState(BaseModel):
     recordingStartedAt: int = 0
     activeSessions: list[ActiveSessionItem] = Field(default_factory=list)
     pendingConfirm: list[PendingConfirmItem] = Field(default_factory=list)
+    pendingApproval: list[PendingApprovalItem] = Field(default_factory=list)
     queuedOfflineCount: int = 0
     recentReports: list[RecentReportItem] = Field(default_factory=list)

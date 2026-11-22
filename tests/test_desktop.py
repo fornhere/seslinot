@@ -264,7 +264,7 @@ def test_notifier_dbus_primary_and_cli_fallbacks(
     app_name, replaces_id, _icon, summary, _body, _acts, hints, _timeout = recorded_dbus[0]
     assert app_name == "SesliNot"
     assert replaces_id == 42
-    assert summary == "Araştırma tamamlandı"
+    assert summary == "Araştırma kasaya kaydedildi"
     assert hints["transient"] is False
     assert "omarchy-glyph" in hints
     parsed_actions = json.loads(hints["omarchy-actions"])
@@ -614,7 +614,7 @@ async def test_daemon_run_once_route_and_research_lifecycle(tmp_path: Path) -> N
     assert confirm_job.status == JobStatus.PENDING_CONFIRM
 
     # Bildirim yaşam döngüsü doğrulaması
-    completed_notifs = [e for e in notifier.events if e["summary"] == "Araştırma tamamlandı"]
+    completed_notifs = [e for e in notifier.events if e["summary"] == "Araştırma kasaya kaydedildi"]
     assert len(completed_notifs) == 1
     assert completed_notifs[0]["transient"] is False
     assert completed_notifs[0]["replaces_id"] == auto_job.notif_id
@@ -861,3 +861,60 @@ async def test_daemon_confirm_dismiss_and_cancel_controls(
     )
     assert state_after.activeSessions == []
     assert any(e["summary"] == "Araştırma iptal edildi" for e in notifier.events)
+
+
+def test_notify_research_ready_for_approval_actions_and_safety(tmp_path: Path) -> None:
+    cfg = _make_test_config(tmp_path)
+    notifier = RecordingNotifier(cfg)
+    preview_file = tmp_path / "preview.md"
+    preview_file.write_text("# Önizleme\n", encoding="utf-8")
+
+    # 1) Önizleme dosyası varken Aksiyon #0 güvenli 'Önizle' olmalı, toplam 3 aksiyon
+    notifier.notify_research_ready_for_approval(
+        notif_id=12,
+        job_id="res-approval-1",
+        topic="SQLite WAL Optimizasyonu",
+        preview_path=str(preview_file),
+        source_count=9,
+        confidence="yüksek",
+    )
+    ev = notifier.events[-1]
+    assert ev["summary"] == "Araştırma hazır — Kaydedilsin mi?"
+    assert ev["transient"] is False
+    assert ev["replaces_id"] == 12
+    assert len(ev["actions"]) == 3
+    assert ev["actions"][0].label == "Önizle"
+    assert ev["actions"][0].argv == ["xdg-open", str(preview_file)]
+    assert ev["actions"][1].label == "Kasaya Kaydet"
+    assert ev["actions"][1].argv == ["seslinot-ctl", "approve-report", "res-approval-1"]
+    assert ev["actions"][2].label == "Reddet"
+    assert ev["actions"][2].argv == ["seslinot-ctl", "reject-report", "res-approval-1"]
+    # validate_actions sorunsuz geçmeli
+    validate_actions(ev["actions"])
+
+    # 2) Önizleme dosyası yoksa Aksiyon #0 güvenli 'Paneli Aç' olmalı
+    notifier.notify_research_ready_for_approval(
+        notif_id=13,
+        job_id="res-approval-2",
+        topic="Kayıp Önizleme",
+        preview_path=str(tmp_path / "yok.md"),
+        source_count=4,
+        confidence="orta",
+    )
+    ev2 = notifier.events[-1]
+    assert ev2["actions"][0].label == "Paneli Aç"
+    assert ev2["actions"][1].label == "Kasaya Kaydet"
+    assert ev2["actions"][2].label == "Reddet"
+
+    # 3) reject-report asla Aksiyon #0 olamamalı
+    with pytest.raises(ValueError, match="ilk aksiyon güvenli"):
+        validate_actions(
+            [NotificationAction(label="Vazgeç", argv=["seslinot-ctl", "reject-report", "res-1"])]
+        )
+
+    # 4) Reddetme bildirimi transient olmalı
+    notifier.notify_research_rejected(12, "SQLite WAL Optimizasyonu")
+    ev_rej = notifier.events[-1]
+    assert ev_rej["summary"] == "Rapor kasaya kaydedilmedi"
+    assert ev_rej["transient"] is True
+

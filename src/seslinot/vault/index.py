@@ -415,6 +415,13 @@ class VaultIndex:
                     st = fpath.stat()
                 except OSError:
                     continue
+                if fpath.name.casefold() in {
+                    "readme.md",
+                    "ana sayfa.md",
+                    "sesli not haritası.md",
+                    "araştırma haritası.md",
+                }:
+                    continue
                 rel = _normalize_rel_posix(str(fpath.relative_to(self.vault_path)))
                 parts = PurePosixPath(rel).parts
                 folder = _nfc(parts[0]) if len(parts) > 1 else ""

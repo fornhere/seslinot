@@ -317,17 +317,19 @@ async def test_past_third_quoted_passes_stage1_and_stage2_returns_note_only(
         "reason": reason_label,
     }
 
-    async def fake_run_agy(self: IntentRouter, prompt: str, schema_str: str) -> RouteDecision:
+    async def fake_run_claude(self: IntentRouter, prompt: str, schema_str: str) -> RouteDecision:
         assert text.strip() in prompt
-        return parse_route_decision(json.dumps(mock_payload, ensure_ascii=False), backend_used="agy")
+        return parse_route_decision(
+            json.dumps(mock_payload, ensure_ascii=False), backend_used="claude"
+        )
 
-    monkeypatch.setattr(IntentRouter, "_run_agy", fake_run_agy)
+    monkeypatch.setattr(IntentRouter, "_run_claude", fake_run_claude)
 
     router = IntentRouter(SesliNotConfig())
     decision, action = await router.route(text)
     assert decision.is_research is False
     assert decision.intent_type == "narrative_mention"
-    assert decision.backend_used == "agy"
+    assert decision.backend_used == "claude"
     assert action == "note_only"
 
 
@@ -371,7 +373,7 @@ async def test_mixed_note_pronoun_resolution_stage2(
     assert decision.confidence == 0.93
     assert decision.research_topic == "Ollama ve vLLM VRAM kullanımı karşılaştırması"
     assert len(decision.research_questions) == 2
-    assert decision.backend_used == "agy"
+    assert decision.backend_used == "claude"
     assert action == "auto_start"
 
 
@@ -402,7 +404,7 @@ async def test_force_stage2_bypasses_prefilter(
     router = IntentRouter(SesliNotConfig())
     decision, action = await router.route(transcript, force_stage2=True)
     assert decision.is_research is True
-    assert decision.backend_used == "agy"
+    assert decision.backend_used == "claude"
     assert action == "confirm"
 
 
@@ -730,8 +732,8 @@ async def test_fallback_agy_to_claude_to_codex(
 
     decision, action = await router.route("PipeWire düşük gecikme ayarlarını araştır.")
 
-    assert [c[0][0] for c in invoked] == ["agy", "claude", "codex"]
-    assert procs[0].killed is True  # zaman aşımında süreç sonlandırıldı
+    assert [c[0][0] for c in invoked] == ["claude", "agy", "codex"]
+    assert procs[1].killed is True  # agy zaman aşımında süreç sonlandırıldı
     assert len(codex_stdin_captured) == 1
     assert codex_stdin_captured[0] is not None
     assert "PipeWire düşük gecikme ayarlarını araştır." in codex_stdin_captured[0].decode("utf-8")
@@ -742,12 +744,12 @@ async def test_fallback_agy_to_claude_to_codex(
     assert action == "auto_start"
 
 
-async def test_fallback_agy_missing_binary_uses_claude(
+async def test_fallback_claude_missing_binary_uses_agy(
     clean_router_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[str] = []
-    claude_envelope = {
+    agy_envelope = {
         "type": "result",
         "is_error": False,
         "structured_output": _sample_decision_dict(confidence=0.68),
@@ -755,13 +757,12 @@ async def test_fallback_agy_missing_binary_uses_claude(
 
     async def fake_exec(*cmd: str, **kwargs: Any) -> _FakeProcess:
         seen.append(cmd[0])
-        if cmd[0] == "agy":
-            raise FileNotFoundError("agy not found")
         if cmd[0] == "claude":
-            assert "--bare" not in cmd
+            raise FileNotFoundError("claude not found")
+        if cmd[0] == "agy":
             return _FakeProcess(
                 returncode=0,
-                stdout=json.dumps(claude_envelope, ensure_ascii=False).encode("utf-8"),
+                stdout=json.dumps(agy_envelope, ensure_ascii=False).encode("utf-8"),
             )
         raise AssertionError(f"codex çağrılmamalıydı: {cmd[0]}")
 
@@ -770,8 +771,8 @@ async def test_fallback_agy_missing_binary_uses_claude(
     router = IntentRouter(SesliNotConfig())
     decision, action = await router.route("Rust async runtime farklarını araştıralım.")
 
-    assert seen == ["agy", "claude"]
-    assert decision.backend_used == "claude"
+    assert seen == ["claude", "agy"]
+    assert decision.backend_used == "agy"
     assert action == "confirm"
 
 

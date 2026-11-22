@@ -13,6 +13,7 @@ from seslinot.models import (
     ActiveSessionItem,
     DesktopState,
     JobStatus,
+    PendingApprovalItem,
     PendingConfirmItem,
     RecentReportItem,
     ResearchJob,
@@ -431,6 +432,7 @@ class SesliNotDB:
     ) -> DesktopState:
         running = self.list_jobs([JobStatus.RUNNING, JobStatus.QUEUED], limit=20)
         pending = self.list_jobs([JobStatus.PENDING_CONFIRM], limit=20)
+        awaiting = self.list_jobs([JobStatus.AWAITING_APPROVAL], limit=20)
         offline = self.list_jobs([JobStatus.PENDING_ROUTE, JobStatus.QUEUED_OFFLINE], limit=100)
         done = self.list_jobs([JobStatus.SUCCEEDED], limit=10)
 
@@ -454,6 +456,44 @@ class SesliNotDB:
             )
             for j in pending
         ]
+        approval_items: list[PendingApprovalItem] = []
+        for j in awaiting:
+            summary = ""
+            preview_path = ""
+            verified_quotes = 0
+            conf_label = "orta"
+            audit_status = "passed"
+            title = j.topic
+            src_count = j.source_count
+            if j.session_dir:
+                staged = Path(j.session_dir) / "pending_report.json"
+                if staged.is_file():
+                    try:
+                        meta = json.loads(staged.read_text(encoding="utf-8"))
+                        summary = str(meta.get("summary") or "")
+                        preview_path = str(meta.get("preview_path") or "")
+                        verified_quotes = int(meta.get("verified_quotes") or 0)
+                        conf_label = str(meta.get("confidence") or "orta")
+                        audit_status = str(meta.get("audit_status") or "passed")
+                        src_count = int(meta.get("source_count") or src_count)
+                        rep = meta.get("report")
+                        if isinstance(rep, dict) and rep.get("title"):
+                            title = str(rep["title"])
+                    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                        pass
+            approval_items.append(
+                PendingApprovalItem(
+                    id=j.job_id,
+                    title=title,
+                    summary=summary,
+                    previewPath=preview_path,
+                    sourceCount=src_count,
+                    verifiedQuotes=verified_quotes,
+                    confidence=conf_label,
+                    auditStatus=audit_status,
+                    createdAt=_iso_to_epoch(j.finished_at or j.created_at),
+                )
+            )
         report_items = [
             RecentReportItem(
                 id=j.job_id,
@@ -470,6 +510,7 @@ class SesliNotDB:
             recordingStartedAt=recording_started_at,
             activeSessions=active_items,
             pendingConfirm=pending_items,
+            pendingApproval=approval_items,
             queuedOfflineCount=len(offline),
             recentReports=report_items,
         )

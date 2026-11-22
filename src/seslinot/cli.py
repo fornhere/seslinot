@@ -172,7 +172,11 @@ def _cmd_transcribe(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
 
 
 def _run_job_foreground(
-    cfg: SesliNotConfig, pipeline: SesliNotPipeline, job_id: str
+    cfg: SesliNotConfig,
+    pipeline: SesliNotPipeline,
+    job_id: str,
+    *,
+    auto_save: bool | None = None,
 ) -> int:
     job = pipeline.db.get_job(job_id)
     if job is None:
@@ -192,7 +196,34 @@ def _run_job_foreground(
         pipeline.osd.write_desktop_state(pipeline.db.build_desktop_state())
 
     try:
-        res = asyncio.run(pipeline.execute_research_job(job, on_phase=_on_phase))
+        res = asyncio.run(
+            pipeline.execute_research_job(job, on_phase=_on_phase, auto_save=auto_save)
+        )
+        if res.awaiting_approval:
+            nid = notifier.notify_research_ready_for_approval(
+                notif_id,
+                job_id,
+                job.topic,
+                res.preview_path,
+                res.source_count,
+                res.confidence_label,
+            )
+            pipeline.db.update_job_status(
+                job_id,
+                JobStatus.AWAITING_APPROVAL,
+                phase=ResearchPhase.AWAITING_APPROVAL,
+                phase_detail=PHASE_LABELS_TR[ResearchPhase.AWAITING_APPROVAL],
+                source_count=res.source_count,
+                session_dir=res.session_dir or job.session_dir,
+                notif_id=nid or notif_id,
+            )
+            pipeline.osd.write_desktop_state(pipeline.db.build_desktop_state())
+            print(f"\nRapor hazır ve onayınızı bekliyor ({res.source_count} doğrulanmış kaynak, güven: {res.confidence_label}).")
+            print(f"Önizleme : {res.preview_path}")
+            print(f"Kaydet   : seslinot-ctl approve-report {job_id}")
+            print(f"Reddet   : seslinot-ctl reject-report {job_id}")
+            return 0
+
         pipeline.db.update_job_status(
             job_id,
             JobStatus.SUCCEEDED,
@@ -201,6 +232,7 @@ def _run_job_foreground(
             report_rel_path=res.report_rel_path,
             obsidian_uri=res.obsidian_uri,
             source_count=res.source_count,
+            session_dir=res.session_dir or job.session_dir,
             finished=True,
         )
         notifier.notify_research_completed(
@@ -243,7 +275,12 @@ def _cmd_research(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
     print(f"Sesli not: {result['vault_rel_path']}")
     print(f"Araştırma oturumu: {job.job_id} ({job.topic})")
     if args.run_now:
-        return _run_job_foreground(cfg, pipeline, job.job_id)
+        return _run_job_foreground(
+            cfg,
+            pipeline,
+            job.job_id,
+            auto_save=True if getattr(args, "auto_save", False) else None,
+        )
     print("İşi arka planda yürütmek için `seslinotd` çalışıyor olmalı (veya `--run-now` kullanın).")
     return 0
 
@@ -397,6 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("topic", nargs="+", help="Araştırma konusu")
     res.add_argument("--quick", action="store_true")
     res.add_argument("--run-now", action="store_true", help="Ön planda çalıştır ve ilerlemeyi yazdır")
+    res.add_argument("--auto-save", action="store_true", help="Onay beklemeden doğrudan kasaya kaydet")
 
     st = sub.add_parser("status", help="Aktif durum, son notlar ve işler")
     st.add_argument("--json", action="store_true")
@@ -443,7 +481,10 @@ def ctl_main(argv: Sequence[str] | None = None) -> int:
     """`seslinot-ctl` giriş noktası (Omarchy bar/bildirim aksiyonları için)."""
     p = argparse.ArgumentParser(prog="seslinot-ctl", description="SesliNot araştırma iş kontrolü")
     p.add_argument("--config", type=Path, default=None)
-    p.add_argument("action", choices=["confirm", "dismiss", "cancel", "open"])
+    p.add_argument(
+        "action",
+        choices=["confirm", "dismiss", "cancel", "approve-report", "reject-report", "preview", "open"],
+    )
     p.add_argument("job_id")
     args = p.parse_args(argv)
 
@@ -455,6 +496,29 @@ def ctl_main(argv: Sequence[str] | None = None) -> int:
         ok = daemon.dismiss_job(args.job_id)
     elif args.action == "cancel":
         ok = daemon.cancel_job(args.job_id)
+    elif args.action == "approve-report":
+        pipeline = SesliNotPipeline(cfg, db=daemon.db, osd=daemon.osd, notifier=daemon.notifier)
+        res = pipeline.approve_pending_report(args.job_id)
+        if res is None:
+            print(f"Onay bekleyen rapor bulunamadı: {args.job_id}", file=sys.stderr)
+            return 1
+        print(f"Kasaya kaydedildi: {res.report_rel_path}")
+        print(res.obsidian_uri)
+        return 0
+    elif args.action == "reject-report":
+        pipeline = SesliNotPipeline(cfg, db=daemon.db, osd=daemon.osd, notifier=daemon.notifier)
+        ok = pipeline.reject_pending_report(args.job_id)
+        if ok:
+            print(f"Rapor reddedildi (kasaya yazılmadı): {args.job_id}")
+    elif args.action == "preview":
+        job = daemon.db.get_job(args.job_id)
+        if not job or not job.session_dir:
+            return 1
+        preview = Path(job.session_dir) / "preview.md"
+        if not preview.is_file():
+            return 1
+        print(preview.read_text(encoding="utf-8"))
+        return 0
     elif args.action == "open":
         job = daemon.db.get_job(args.job_id)
         if not job or not job.report_rel_path:

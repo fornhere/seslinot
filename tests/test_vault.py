@@ -486,6 +486,12 @@ def test_vault_index_incremental_sync_exclusions_secrets_and_turkish_search(
         encoding="utf-8",
     )
 
+    # Navigasyon ve depo hub notları da FTS5 bağlamına girmemeli
+    (vault / "Ana Sayfa.md").write_text("# Ana Sayfa\n\nDüşük gecikme ana sayfa.\n", encoding="utf-8")
+    (vault / "sesli-notlar" / "README.md").write_text("# Sesli Notlar\n\nDüşük gecikme kuralı.\n", encoding="utf-8")
+    (vault / "sesli-notlar" / "Sesli Not Haritası.md").write_text("# Harita\n\nDüşük gecikme haritası.\n", encoding="utf-8")
+    (vault / "araştırmalar" / "Araştırma Haritası.md").write_text("# Harita\n\nDüşük gecikme araştırmaları.\n", encoding="utf-8")
+
     # Hariç tutulan dizinler
     for excluded in (
         ".git",

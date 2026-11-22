@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -43,7 +44,7 @@ _DESTRUCTIVE_LABEL_TOKENS: tuple[str, ...] = (
 )
 
 _DESTRUCTIVE_ARGV_SUBCOMMANDS: frozenset[str] = frozenset(
-    {"cancel", "dismiss", "delete", "stop", "kill", "remove"}
+    {"cancel", "dismiss", "delete", "stop", "kill", "remove", "reject-report"}
 )
 
 _OMARCHY_KNOWN_FLAGS: frozenset[str] = frozenset(
@@ -629,6 +630,64 @@ class OmarchyNotifier:
             ],
         )
 
+    def notify_research_ready_for_approval(
+        self,
+        notif_id: int,
+        job_id: str,
+        topic: str,
+        preview_path: str,
+        source_count: int,
+        confidence: str = "orta",
+    ) -> int:
+        """Araştırma bitince kasaya yazmadan önce kullanıcı onayına sunar.
+
+        Aksiyon #0 her zaman güvenli okuma ('Önizle' veya 'Paneli Aç') olur.
+        """
+        meta = f"{source_count} doğrulanmış kaynak · güven: {confidence}"
+        body = f"{topic}\n{meta}"
+        actions: list[NotificationAction] = []
+        if preview_path and Path(preview_path).is_file():
+            actions.append(
+                NotificationAction(label="Önizle", argv=["xdg-open", preview_path])
+            )
+        else:
+            actions.append(
+                NotificationAction(label="Paneli Aç", argv=self._panel_open_argv())
+            )
+        actions.append(
+            NotificationAction(
+                label="Kasaya Kaydet",
+                argv=["seslinot-ctl", "approve-report", job_id],
+            )
+        )
+        actions.append(
+            NotificationAction(
+                label="Reddet",
+                argv=["seslinot-ctl", "reject-report", job_id],
+            )
+        )
+        return self.send(
+            "Araştırma hazır — Kaydedilsin mi?",
+            body,
+            glyph="󰄱",
+            urgency="normal",
+            replaces_id=notif_id,
+            timeout_ms=30000,
+            transient=False,
+            actions=actions,
+        )
+
+    def notify_research_rejected(self, notif_id: int, topic: str) -> int:
+        return self.send(
+            "Rapor kasaya kaydedilmedi",
+            topic,
+            glyph="󰜺",
+            urgency="low",
+            replaces_id=notif_id,
+            timeout_ms=5000,
+            transient=True,
+        )
+
     def notify_research_completed(
         self,
         notif_id: int,
@@ -651,7 +710,7 @@ class OmarchyNotifier:
                 NotificationAction(label="Paneli Aç", argv=self._panel_open_argv())
             )
         return self.send(
-            "Araştırma tamamlandı",
+            "Araştırma kasaya kaydedildi",
             body,
             glyph="󰄬",
             urgency="normal",

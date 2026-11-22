@@ -1512,3 +1512,56 @@ def test_render_deterministic_report_repeated_citations_and_keep_ids() -> None:
     assert "[^S02]: [Kaynak B](https://docs.example/b)" in kept
     assert "[^S01]: [Kaynak A](https://docs.example/a)" in kept
 
+
+def test_inline_citation_before_colon_renumbered_and_audited() -> None:
+    registry = {
+        "S05": SourceRecord(
+            source_id="S05",
+            source_type="web",
+            canonical_url="https://sqlite.org/wal.html",
+            final_url="https://sqlite.org/wal.html",
+            title="Write-Ahead Logging",
+            fetch_status="fetched_ok",
+            retrieved_at="2026-11-22T18:00:00+00:00",
+        )
+    }
+    draft = (
+        "SQLite aşağıdaki üç bileşeni döndürür [^S05]:\n\n"
+        "- `busy` kilidi\n"
+        "- `log` çerçeve sayısı\n\n"
+        "## Kaynaklar\n\n"
+        "[^S05]: Sahte LLM dipnotu\n"
+    )
+    ghosts, leaked = audit_draft_citations(draft, registry)
+    assert ghosts == []
+    assert leaked == []
+
+    final_md, cited = render_deterministic_report(draft, registry, renumber=True)
+    assert [c.source_id for c in cited] == ["S05"]
+    assert "döndürür [^1]:" in final_md
+    assert "[^S05]" not in final_md
+
+    # Audit üçlü çıkarıcı da iki nokta öncesindeki atfı yakalamalı
+    qchecks = [
+        QuoteVerification(
+            claim_id="c1",
+            worker_id="w1",
+            source_id="S05",
+            quote_status="exact_match",
+            similarity=100.0,
+            claim_tr="Üç bileşen döner",
+            exact_quote="returns three columns",
+        )
+    ]
+    triples = extract_claim_triples("SQLite şu bileşenleri döndürür [^S05]:", qchecks, {})
+    assert len(triples) == 1
+    assert triples[0]["source_ids"] == ["S05"]
+
+
+def test_canonicalize_url_strips_www_prefix_for_dedup() -> None:
+    u1 = canonicalize_url("https://www.sqlite.org/wal.html?utm_source=test")
+    u2 = canonicalize_url("https://sqlite.org/wal.html")
+    assert u1 == u2 == "https://sqlite.org/wal.html"
+    # İki etiketli www.com alan adı bozulmamalı
+    assert canonicalize_url("https://www.com/path") == "https://www.com/path"
+

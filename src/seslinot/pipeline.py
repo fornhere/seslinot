@@ -310,13 +310,79 @@ class SesliNotPipeline:
         decision, _action = await self.router.route(job.raw_prompt, force_stage2=True)
         return decision
 
+    def _build_preview_markdown(self, report: Any) -> str:
+        ver = report.verification
+        verified_quotes = ver.quote_exact_match + ver.quote_near_match
+        header = (
+            f"# [ONAY BEKLİYOR] {report.title}\n\n"
+            f"> **Güven:** `{report.confidence}` · **Doğrulanmış kaynak:** `{len(report.sources)}` · "
+            f"**Doğrulanmış alıntı:** `{verified_quotes}` · **Denetim:** `{ver.audit_status}`\n"
+            f">\n"
+            f"> Kasaya kaydetmek için: `seslinot-ctl approve-report {report.report_id}`  \n"
+            f"> Reddetmek için: `seslinot-ctl reject-report {report.report_id}`\n\n"
+            f"---\n\n"
+        )
+        return header + report.body_markdown.strip() + "\n"
+
+    def _extract_short_summary(self, body_markdown: str, max_chars: int = 220) -> str:
+        for line in body_markdown.splitlines():
+            clean = line.strip().lstrip("-*• ").strip()
+            if not clean or clean.startswith("#") or clean.startswith(">") or clean.startswith("|"):
+                continue
+            if len(clean) >= 16:
+                return clean[:max_chars] + ("…" if len(clean) > max_chars else "")
+        return ""
+
+    def _commit_report_to_vault(
+        self,
+        job: ResearchJob,
+        report: Any,
+        *,
+        triggered_by: str = "",
+        prev_rel: str = "",
+    ) -> ResearchExecutionResult:
+        wikilinks = self.index.discover_wikilinks(
+            f"{report.title} {report.body_markdown[:1200]}", limit=5
+        )
+        _abs_path, report_rel_path, _masked = self.writer.write_research_report(
+            report, wikilinks=wikilinks
+        )
+
+        if triggered_by:
+            self.writer.link_research_to_voice_note(
+                triggered_by, report_rel_path, report.title
+            )
+            self.db.update_note_research_link(
+                job.note_id, f"[[{report_rel_path.removesuffix('.md')}]]"
+            )
+
+        if prev_rel and prev_rel != report_rel_path:
+            self.writer.mark_previous_research_superseded(prev_rel, report_rel_path)
+
+        try:
+            self.index.sync()
+        except Exception as exc:
+            logger.debug("Rapor sonrası FTS5 senkron atlandı: %s", exc)
+
+        obsidian_uri = make_obsidian_uri(self.cfg.vault.vault_name, report_rel_path)
+        return ResearchExecutionResult(
+            report_rel_path=report_rel_path,
+            obsidian_uri=obsidian_uri,
+            source_count=len(report.sources),
+            session_dir=job.session_dir,
+            unit_name=job.unit_name,
+            awaiting_approval=False,
+            confidence_label=report.confidence,
+        )
+
     async def execute_research_job(
         self,
         job: ResearchJob,
         on_phase: PhaseCallback | None = None,
+        *,
+        auto_save: bool | None = None,
     ) -> ResearchExecutionResult:
         """Daemon ve CLI `--run-now` tarafından kullanılan uçtan uca araştırma yürütücüsü."""
-        # Faz 0: Vault-First bağlam + önceki sürüm tespiti
         vault_context = self.bridge.gather_vault_context(job.topic, limit=6)
         note = self.db.get_note(job.note_id)
         triggered_by = note.vault_rel_path if note else ""
@@ -347,41 +413,132 @@ class SesliNotPipeline:
             previous_version_rel_path=prev_rel,
         )
 
-        # Faz 4c: Kasa yazımı + wikilink + hash-korumalı geri bağlantılar
+        # Oturum klasörünü her durumda kalıcı olarak bil
+        sess_path = Path(job.session_dir) if job.session_dir else (
+            self.cfg.paths.sessions_dir / job.job_id
+        )
+        sess_path.mkdir(parents=True, exist_ok=True)
+        job.session_dir = str(sess_path)
+
+        require_approval = (
+            self.cfg.research.require_save_approval
+            if auto_save is None
+            else (not auto_save)
+        )
+
+        if require_approval:
+            if on_phase is not None:
+                maybe = on_phase(
+                    ResearchPhase.AWAITING_APPROVAL,
+                    "Rapor hazır — kasaya kayıt için onayınız bekleniyor",
+                )
+                if hasattr(maybe, "__await__"):
+                    await maybe
+
+            preview_path = sess_path / "preview.md"
+            preview_path.write_text(self._build_preview_markdown(report), encoding="utf-8")
+
+            summary = self._extract_short_summary(report.body_markdown)
+            ver = report.verification
+            staged_payload = {
+                "job_id": job.job_id,
+                "note_id": job.note_id,
+                "triggered_by_rel_path": triggered_by,
+                "previous_version_rel_path": prev_rel,
+                "preview_path": str(preview_path),
+                "summary": summary,
+                "source_count": len(report.sources),
+                "verified_quotes": ver.quote_exact_match + ver.quote_near_match,
+                "confidence": report.confidence,
+                "audit_status": ver.audit_status,
+                "report": report.model_dump(mode="json"),
+            }
+            import json as _json
+
+            (sess_path / "pending_report.json").write_text(
+                _json.dumps(staged_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return ResearchExecutionResult(
+                report_rel_path="",
+                obsidian_uri="",
+                source_count=len(report.sources),
+                session_dir=str(sess_path),
+                unit_name=job.unit_name,
+                awaiting_approval=True,
+                preview_path=str(preview_path),
+                summary=summary,
+                confidence_label=report.confidence,
+            )
+
         if on_phase is not None:
             maybe = on_phase(ResearchPhase.WRITING, "Rapor Hafıza kasasına yazılıyor")
             if hasattr(maybe, "__await__"):
                 await maybe
 
-        wikilinks = self.index.discover_wikilinks(
-            f"{report.title} {report.body_markdown[:1200]}", limit=5
-        )
-        _abs_path, report_rel_path, _masked = self.writer.write_research_report(
-            report, wikilinks=wikilinks
+        return self._commit_report_to_vault(
+            job, report, triggered_by=triggered_by, prev_rel=prev_rel
         )
 
-        if triggered_by:
-            self.writer.link_research_to_voice_note(
-                triggered_by, report_rel_path, report.title
-            )
-            self.db.update_note_research_link(
-                job.note_id, f"[[{report_rel_path.removesuffix('.md')}]]"
-            )
+    def approve_pending_report(self, job_id: str) -> ResearchExecutionResult | None:
+        """Onay bekleyen (AWAITING_APPROVAL) araştırma raporunu kasaya atomik yazar."""
+        import json as _json
+        from seslinot.models import ResearchReportInput
 
-        if prev_rel and prev_rel != report_rel_path:
-            self.writer.mark_previous_research_superseded(prev_rel, report_rel_path)
+        job = self.db.get_job(job_id)
+        if job is None or job.status != JobStatus.AWAITING_APPROVAL:
+            return None
+        if not job.session_dir:
+            return None
 
-        try:
-            self.index.sync()
-        except Exception as exc:
-            logger.debug("Rapor sonrası FTS5 senkron atlandı: %s", exc)
+        staged_file = Path(job.session_dir) / "pending_report.json"
+        if not staged_file.is_file():
+            return None
 
-        obsidian_uri = make_obsidian_uri(self.cfg.vault.vault_name, report_rel_path)
-        cited_count = len(report.sources)
-        return ResearchExecutionResult(
-            report_rel_path=report_rel_path,
-            obsidian_uri=obsidian_uri,
-            source_count=cited_count,
-            session_dir=job.session_dir,
-            unit_name=job.unit_name,
+        data = _json.loads(staged_file.read_text(encoding="utf-8"))
+        report = ResearchReportInput.model_validate(data["report"])
+        triggered_by = str(data.get("triggered_by_rel_path") or "")
+        prev_rel = str(data.get("previous_version_rel_path") or "")
+
+        res = self._commit_report_to_vault(
+            job, report, triggered_by=triggered_by, prev_rel=prev_rel
         )
+        self.db.update_job_status(
+            job_id,
+            JobStatus.SUCCEEDED,
+            phase=ResearchPhase.COMPLETED,
+            phase_detail="Kullanıcı onayıyla kasaya kaydedildi",
+            report_rel_path=res.report_rel_path,
+            obsidian_uri=res.obsidian_uri,
+            source_count=res.source_count,
+            finished=True,
+        )
+        self.db.record_event(
+            job_id,
+            "approved_and_saved",
+            f"Kullanıcı onayıyla kasaya yazıldı: {res.report_rel_path}",
+            payload={"report_rel_path": res.report_rel_path, "obsidian_uri": res.obsidian_uri},
+        )
+        self.notifier.notify_research_completed(
+            job.notif_id, report.title or job.topic, res.obsidian_uri, res.source_count
+        )
+        self._sync_state(VoiceState.IDLE, 0)
+        return res
+
+    def reject_pending_report(self, job_id: str) -> bool:
+        """Onay bekleyen raporu kasaya yazmadan reddeder."""
+        job = self.db.get_job(job_id)
+        if job is None or job.status != JobStatus.AWAITING_APPROVAL:
+            return False
+
+        self.db.update_job_status(
+            job_id,
+            JobStatus.REJECTED,
+            phase=ResearchPhase.CANCELLED,
+            phase_detail="Kullanıcı kaydı reddetti",
+            finished=True,
+        )
+        self.db.record_event(job_id, "rejected", "Kullanıcı raporun kasaya yazılmasını reddetti")
+        self.notifier.notify_research_rejected(job.notif_id, job.topic)
+        self._sync_state(VoiceState.IDLE, 0)
+        return True

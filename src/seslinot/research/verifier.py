@@ -36,7 +36,7 @@ _MD_INLINE_RE = re.compile(r"(?:`+|\*\*|__|~~|\*|(?<!\w)_(?!\w))")
 _MD_LINE_PREFIX_RE = re.compile(r"(?m)^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+)")
 _WS_RE = re.compile(r"\s+")
 
-_CITATION_TOKEN_RE = re.compile(r"\[\^([A-Za-z0-9_-]+)\](?!:)")
+_CITATION_TOKEN_RE = re.compile(r"\[\^([A-Za-z0-9_-]+)\]")
 _FOOTNOTE_DEF_LINE_RE = re.compile(r"(?m)^\[\^[A-Za-z0-9_-]+\]:.*(?:\n|$)")
 _BIB_SECTION_RE = re.compile(
     r"(?im)^#{2,3}\s+(?:Kaynaklar|Kaynakça|Sources|References|Bibliography)\s*$.*?(?=^##\s+|\Z)",
