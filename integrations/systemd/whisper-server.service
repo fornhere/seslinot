@@ -1,0 +1,25 @@
+# SesliNot + Voxtype ortak yerel GPU Whisper STT sunucusu (OpenAI-uyumlu)
+# Kurulum:
+#   mkdir -p ~/.config/systemd/user
+#   cp integrations/systemd/whisper-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now whisper-server.service
+#
+# Not: whisper-server ikilisi farklı bir konumdaysa (örn. %h/.local/bin/whisper-server),
+# `systemctl --user edit whisper-server.service` ile ExecStart yolunu güncelleyin.
+
+[Unit]
+Description=SesliNot Local Whisper STT Server (OpenAI-compatible)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/whisper-server --host 127.0.0.1 --port 8178 --inference-path /v1/audio/transcriptions -m %h/.local/share/voxtype/models/ggml-large-v3-turbo.bin -l tr -fa --no-context
+Restart=on-failure
+RestartSec=5
+Nice=-5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

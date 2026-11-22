@@ -1,0 +1,18 @@
+# Voxtype -> Yerel whisper-server ortak GPU paylaşım parçacığı
+#
+# Amaç:
+#   Hem SesliNot hem de Voxtype aynı yerel `whisper-server.service` (127.0.0.1:8178)
+#   üzerinden konuşarak ggml-large-v3-turbo (~1.6 GB VRAM) modelinin GPU belleğine
+#   iki kez yüklenmesini önler.
+#
+# Kullanım:
+#   ~/.config/voxtype/config.toml dosyanızdaki `[whisper]` bölümüne aşağıdaki
+#   remote ayarlarını ekleyin (mevcut `initial_prompt` satırınızı koruyabilirsiniz)
+#   ve ardından Voxtype servisini yeniden başlatın.
+
+[whisper]
+mode = "remote"
+remote_endpoint = "http://127.0.0.1:8178/v1"
+remote_model = "whisper-1"
+language = "tr"
+translate = false
