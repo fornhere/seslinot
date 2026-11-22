@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "forn.seslinot",
+  "name": "SesliNot",
+  "version": "0.1.0",
+  "author": "forn",
+  "license": "MIT",
+  "description": "Yerel GPU sesli not yakalama ve çok-ajanlı derin araştırma durum çubuğu paneli.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "SesliNot",
+    "description": "Sesli kayıt durumu, aktif derin araştırmalar, bekleyen onaylar ve tamamlanan Obsidian raporları.",
+    "category": "Productivity",
+    "aliases": [
+      "seslinot",
+      "voice-notes",
+      "research"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "centerEnd",
+    "defaults": {
+      "statePath": ""
+    },
+    "schema": [
+      {
+        "key": "statePath",
+        "type": "path",
+        "label": "Durum dosyası yolu",
+        "defaultValue": "",
+        "description": "Boş bırakıldığında $XDG_RUNTIME_DIR/seslinot/state.json okunur."
+      }
+    ]
+  }
+}

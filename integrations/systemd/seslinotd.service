@@ -1,0 +1,18 @@
+[Unit]
+Description=SesliNot arka plan araştırma ve masaüstü eşitleme servisi
+After=graphical-session.target network-online.target
+Wants=network-online.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/seslinotd
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.local/bin:/usr/share/omarchy/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=graphical-session.target
