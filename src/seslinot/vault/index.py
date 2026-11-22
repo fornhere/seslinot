@@ -693,6 +693,8 @@ class VaultIndex:
                 return False
             if _is_forbidden_link_target(rel_no_md):
                 return False
+            if norm_rel.casefold().startswith(("komuta/", "zihin/")):
+                return False
             candidate_path = self.vault_path / f"{rel_no_md}.md"
             if candidate_path.is_symlink() or not candidate_path.is_file():
                 return False

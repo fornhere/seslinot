@@ -669,9 +669,14 @@ def test_stt_client_voxtype_fallback_and_fail_closed(
 
     def fake_voxtype(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         voxtype_calls.append(list(cmd))
-        return subprocess.CompletedProcess(
-            cmd, 0, stdout="Yerel voxtype yedeği sorunsuz çalıştı.\n", stderr=""
+        noisy_stdout = (
+            'Loading audio file: "/tmp/chunk_000.wav"\n'
+            "Audio format: 16000 Hz, 1 channel(s), Int\n"
+            "Processing 48000 samples (3.00s)...\n"
+            "2026-11-22T17:01:04.267Z  INFO Using local whisper transcription mode\n\n"
+            "Yerel voxtype yedeği sorunsuz çalıştı.\n"
         )
+        return subprocess.CompletedProcess(cmd, 0, stdout=noisy_stdout, stderr="")
 
     monkeypatch.setattr("seslinot.audio.stt.shutil.which", lambda name: "/usr/bin/voxtype" if name == "voxtype" else None)
     monkeypatch.setattr("seslinot.audio.stt.subprocess.run", fake_voxtype)
@@ -683,7 +688,7 @@ def test_stt_client_voxtype_fallback_and_fail_closed(
     assert result.backend == "voxtype_cli"
     assert result.text == "Yerel voxtype yedeği sorunsuz çalıştı."
     assert len(voxtype_calls) == 1
-    assert voxtype_calls[0][:2] == ["/usr/bin/voxtype", "transcribe"]
+    assert voxtype_calls[0][:3] == ["/usr/bin/voxtype", "-q", "transcribe"]
 
     # Fallback kapalıysa fail-closed STTError fırlatmalı
     cfg.audio.stt_fallback_voxtype = False

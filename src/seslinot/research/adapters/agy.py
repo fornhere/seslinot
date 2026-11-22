@@ -23,7 +23,6 @@ class AgyAdapter:
         req.work_dir.mkdir(parents=True, exist_ok=True)
         cmd: list[str] = [
             "agy",
-            "--print",
             "--sandbox",
             "--mode",
             "plan",
@@ -49,7 +48,8 @@ class AgyAdapter:
         if req.system_prompt:
             full_prompt = f"<system>\n{req.system_prompt.strip()}\n</system>\n\n{req.prompt}"
 
-        return cmd, full_prompt.encode("utf-8"), None
+        cmd.append(f"--print={full_prompt}")
+        return cmd, None, None
 
     def parse_output(
         self,
@@ -91,8 +91,10 @@ class AgyAdapter:
             parsed_any_jsonl = True
 
             ev_type = str(event.get("type", "")).lower()
-            if ev_type == "error" or event.get("is_error"):
+            if ev_type == "error" or event.get("is_error") or event.get("status") == "ERROR":
                 error_msg = str(event.get("error") or event.get("message") or event.get("result") or "Agy error")
+            elif isinstance(event.get("response"), str) and event["response"].strip():
+                result_text = event["response"]
             elif ev_type == "result":
                 if isinstance(event.get("structured_output"), dict):
                     structured_output = event["structured_output"]

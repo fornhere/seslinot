@@ -34,10 +34,12 @@ _NEGATION_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"|yaz(?:in|iniz|alim|sana|san|sin)?)\b"
     ),
     # araştır(ma) yapma / başlatma / istemiyorum / gerek yok / olmasın
+    # NOT: "yapmanı istiyorum" / "yapmak" / "yapması" olumlu isim-fiildir; yalnızca olumsuz çekimler engellenir!
     re.compile(
         r"\baras[td]ir(?:ma(?:ya|yi|ni|si|sina|sini)?)?\s+"
         r"(?:(?:hic|falan|filan)\s+)?"
-        r"(?:yapma[a-z]*|baslatma[a-z]*|acma[a-z]*|etme[a-z]*"
+        r"(?:(?:yap|baslat|ac)ma(?:yin|yiniz|yalim|sin|sinlar|ya|mamali|mali|m[ae]n[a-z]*)?"
+        r"|etme(?:yin|yiniz|yelim|sin|sinler|ye|memeli|meli|m[ae]n[a-z]*)?"
         r"|istemiyorum|istemem|istemedim"
         r"|(?:gerek|luzum|ihtiyac)\s+yok"
         r"|olmasin|degil)\b"

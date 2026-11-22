@@ -438,14 +438,14 @@ def _extract_h1_title(content: str, fallback: str) -> str:
 
 def _parse_iso_dt(ts: str) -> datetime:
     if not ts:
-        return datetime.now(timezone.utc)
+        return datetime.now().astimezone()
     try:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt
+        return dt.astimezone()
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now().astimezone()
 
 
 def is_referenced_in_hafiza_memory(vault: Path, rel_path: str) -> bool:

@@ -146,10 +146,9 @@ def build_classifier_prompt(raw_transcript: str) -> str:
 
 
 def build_agy_command(model: str, schema_str: str, prompt: str) -> list[str]:
-    """Güvenli `agy` CLI çağrı argüman listesi."""
+    """Güvenli `agy` CLI çağrı argüman listesi (--print=<prompt> bayraklardan sonra)."""
     return [
         "agy",
-        "--print",
         "--model",
         model,
         "--effort",
@@ -159,7 +158,7 @@ def build_agy_command(model: str, schema_str: str, prompt: str) -> list[str]:
         "json",
         "--json-schema",
         schema_str,
-        prompt,
+        f"--print={prompt}",
     ]
 
 

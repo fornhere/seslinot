@@ -231,7 +231,11 @@ def test_writer_scaffolding_voice_note_research_report_and_maps(tmp_path: Path) 
         ],
     )
     assert abs_note.is_file()
-    assert rel_note == "sesli-notlar/2026-11/2026-11-22-1905-pipewire-düşük-gecikme-ayarı.md"
+    from datetime import datetime as _dt
+    local_dt = _dt.fromisoformat(note.created_at).astimezone()
+    expected_hhmm = local_dt.strftime("%H%M")
+    expected_saat = local_dt.strftime("%H:%M")
+    assert rel_note == f"sesli-notlar/2026-11/2026-11-22-{expected_hhmm}-pipewire-düşük-gecikme-ayarı.md"
     assert "legacy_assignment" in masked_rules
 
     note_text = abs_note.read_text(encoding="utf-8")
@@ -245,7 +249,7 @@ def test_writer_scaffolding_voice_note_research_report_and_maps(tmp_path: Path) 
         "durum: işlendi",
         "niyet: araştırma",
         "tarih: 2026-11-22",
-        'saat: "19:05"',
+        f'saat: "{expected_saat}"',
         "süre_sn: 42",
         "dil: tr",
         "stt_modeli: whisper-large-v3-turbo",

@@ -134,7 +134,7 @@ class RouterConfig(BaseModel):
     backends: list[str] = Field(default_factory=lambda: ["agy", "claude", "codex"])
     agy_model: str = "gemini-3.8-flash-low"
     claude_model: str = "haiku"
-    codex_model: str = "gpt-6.1-sol"
+    codex_model: str = "gpt-6-luna"
     timeout_secs: float = 25.0
 
 
@@ -142,14 +142,14 @@ class ResearchConfig(BaseModel):
     lead_backend: str = "claude"
     lead_model: str = "sonnet"
     worker_backend: str = "codex"
-    worker_model: str = "gpt-6.1-sol"
+    worker_model: str = "gpt-6-luna"
     worker_reasoning_effort: str = "medium"
     worker_fallback_backend: str = "claude"
     worker_fallback_model: str = "sonnet"
     synth_backend: str = "claude"
     synth_model: str = "sonnet"
     audit_backend: str = "codex"
-    audit_model: str = "gpt-6.1-sol"
+    audit_model: str = "gpt-6-luna"
     audit_fallback_backend: str = "claude"
     audit_fallback_model: str = "sonnet"
     max_subagents: int = 4

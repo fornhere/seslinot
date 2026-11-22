@@ -249,11 +249,12 @@ def test_agy_and_opencode_adapters_and_registry(tmp_path: Path) -> None:
         timeout_secs=90,
     )
     cmd_agy, stdin_agy, _ = agy.build_command(req_agy)
-    assert cmd_agy[:6] == ["agy", "--print", "--sandbox", "--mode", "plan", "--disable-slash-commands"]
+    assert cmd_agy[:5] == ["agy", "--sandbox", "--mode", "plan", "--disable-slash-commands"]
     assert "--print-timeout" in cmd_agy and cmd_agy[cmd_agy.index("--print-timeout") + 1] == "90s"
     assert "--output-format" in cmd_agy and cmd_agy[cmd_agy.index("--output-format") + 1] == "stream-json"
     assert "--json-schema" in cmd_agy
-    assert stdin_agy == b"Planla"
+    assert cmd_agy[-1].startswith("--print=") and "Planla" in cmd_agy[-1]
+    assert stdin_agy is None
 
     oc = OpenCodeAdapter()
     oc_dir = tmp_path / "opencode"

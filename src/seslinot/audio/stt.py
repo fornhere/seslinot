@@ -238,6 +238,32 @@ def _wav_duration_secs(wav_path: Path) -> float:
         return (frames / rate) if rate > 0 else 0.0
 
 
+_VOXTYPE_NOISE_LINE_RE = re.compile(
+    r"^(?:"
+    r"Loading audio file:"
+    r"|Audio format:"
+    r"|Processing \d+ samples"
+    r"|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\b"
+    r"|whisper_"
+    r"|ggml_"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def parse_voxtype_stdout(stdout: str) -> str:
+    """`voxtype transcribe` çıktısındaki progress ve INFO log satırlarını ayıklar."""
+    kept: list[str] = []
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _VOXTYPE_NOISE_LINE_RE.match(line):
+            continue
+        kept.append(line)
+    return " ".join(kept).strip()
+
+
 class STTClient:
     """VAD + yerel OpenAI-uyumlu Whisper HTTP STT istemcisi (Voxtype CLI yedekli)."""
 
@@ -296,7 +322,7 @@ class STTClient:
 
         try:
             proc = subprocess.run(
-                [voxtype_bin, "transcribe", str(chunk_path)],
+                [voxtype_bin, "-q", "transcribe", str(chunk_path)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -311,7 +337,7 @@ class STTClient:
             err = (proc.stderr or proc.stdout or "").strip()[:300]
             raise STTError(f"voxtype transcribe başarısız (rc={proc.returncode}): {err}")
 
-        return proc.stdout.strip()
+        return parse_voxtype_stdout(proc.stdout)
 
     def transcribe_wav(self, wav_path: Path) -> TranscriptionResult:
         """WAV dosyasını VAD ile <=28sn parçalara ayırır ve metne dönüştürür."""

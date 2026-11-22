@@ -445,11 +445,10 @@ def test_cli_command_construction_exact_safe_flags(tmp_path: Path) -> None:
     schema_str = json.dumps(ROUTER_JSON_SCHEMA, separators=(",", ":"))
     prompt = "PipeWire ayarlarını araştır."
 
-    # 1) agy
+    # 1) agy (--print=<prompt> bayraklardan sonra)
     agy_cmd = build_agy_command("gemini-3.8-flash-low", schema_str, prompt)
     assert agy_cmd == [
         "agy",
-        "--print",
         "--model",
         "gemini-3.8-flash-low",
         "--effort",
@@ -459,8 +458,9 @@ def test_cli_command_construction_exact_safe_flags(tmp_path: Path) -> None:
         "json",
         "--json-schema",
         schema_str,
-        prompt,
+        f"--print={prompt}",
     ]
+
 
     # 2) claude — --bare ASLA olmamalı!
     claude_cmd = build_claude_command("haiku", schema_str, prompt)
@@ -481,14 +481,14 @@ def test_cli_command_construction_exact_safe_flags(tmp_path: Path) -> None:
     # 3) codex — stdin ile "-", shell_tool kapalı, read-only, ephemeral
     schema_file = tmp_path / "schema.json"
     out_file = tmp_path / "out.json"
-    codex_cmd = build_codex_command("gpt-6.1-sol", schema_file, out_file)
+    codex_cmd = build_codex_command("gpt-6-luna", schema_file, out_file)
     assert codex_cmd == [
         "codex",
         "exec",
         "--ephemeral",
         "--skip-git-repo-check",
         "-m",
-        "gpt-6.1-sol",
+        "gpt-6-luna",
         "-c",
         'model_reasoning_effort="low"',
         "--disable",
@@ -501,6 +501,20 @@ def test_cli_command_construction_exact_safe_flags(tmp_path: Path) -> None:
         str(out_file),
         "-",
     ]
+
+
+def test_prefilter_turkish_verbal_noun_vs_negation_regression() -> None:
+    """'araştırma yapmanı istiyorum' olumlu mastardır; 'yapmamanı' olumsuz emirdir."""
+    pos = stage1_prefilter("Evet şimdi senden bir araştırma yapmanı istiyorum.")
+    assert pos.matched is True
+    assert pos.reason == "strong_stem"
+
+    pos2 = stage1_prefilter("Bu konuda kapsamlı bir araştırma başlatmanı istiyorum.")
+    assert pos2.matched is True
+
+    neg = stage1_prefilter("Bu konuda araştırma yapmamanı istiyorum.")
+    assert neg.matched is False
+    assert neg.reason == "explicit_negation"
 
 
 # ---------------------------------------------------------------------------
