@@ -471,3 +471,44 @@ def test_cli_note_status_doctor_and_ctl(tmp_path: Path, capsys) -> None:
     assert rc == 0
     doc = json.loads(capsys.readouterr().out)
     assert doc["vault_exists"] is True
+    assert doc["platform"] in {"linux", "macos", "windows"}
+
+
+def test_cli_init_non_interactive_and_roundtrip(tmp_path: Path, capsys) -> None:
+    from seslinot.config import load_config
+
+    vault_dir = tmp_path / "MyObsidian"
+    cfg_file = tmp_path / "cfg" / "config.toml"
+
+    rc = cli_main(
+        [
+            "--config",
+            str(cfg_file),
+            "init",
+            "--non-interactive",
+            "--vault",
+            str(vault_dir),
+            "--stt",
+            "groq",
+            "--backend",
+            "api",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Kurulum tamamlandı" in out
+    assert cfg_file.is_file()
+
+    # Üzerine yazma koruması (--force olmadan rc=1)
+    rc_dup = cli_main(["--config", str(cfg_file), "init", "--non-interactive", "--vault", str(vault_dir)])
+    assert rc_dup == 1
+
+    # Üretilen config.toml hatasız yüklenmeli ve banka klasörleri hazır olmalı
+    loaded = load_config(cfg_file)
+    assert loaded.vault.path.resolve() == vault_dir.resolve()
+    assert loaded.audio.stt_provider == "groq"
+    assert loaded.research.lead_backend == "api"
+    assert loaded.research.require_save_approval is True
+    assert (vault_dir / "sesli-notlar" / "Sesli Notlar.base").is_file()
+    assert (vault_dir / "araştırmalar" / "Araştırmalar.base").is_file()
+

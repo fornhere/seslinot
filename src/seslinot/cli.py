@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Sequence
 import httpx
 
 from seslinot.audio import AudioCaptureController, CaptureError
-from seslinot.config import SesliNotConfig, load_config
+from seslinot.config import SesliNotConfig, default_config_path, load_config
 from seslinot.db import SesliNotDB
 from seslinot.desktop import OmarchyNotifier, OmarchyOSD, SesliNotDaemon, make_obsidian_uri
 from seslinot.models import (
@@ -23,7 +24,12 @@ from seslinot.models import (
     VoiceState,
 )
 from seslinot.pipeline import SesliNotPipeline
-from seslinot.vault import HafizaBridge
+from seslinot.platform.os_compat import (
+    current_platform,
+    detect_obsidian_vaults,
+    is_hafiza_os_vault,
+)
+from seslinot.vault import HafizaBridge, VaultWriter
 
 
 def _sync_capture_to_desktop(cfg: SesliNotConfig, db: SesliNotDB, osd: OmarchyOSD) -> None:
@@ -338,47 +344,257 @@ def _cmd_status(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
-    checks: dict[str, object] = {}
-    for tool in (
-        "pw-record",
-        "pw-play",
-        "pactl",
-        "ffmpeg",
-        "voxtype",
-        "whisper-server",
-        "claude",
-        "codex",
-        "agy",
-        "opencode",
-        "omarchy-shell",
-        "omarchy-notification-send",
-        "systemd-run",
-        "rg",
-    ):
+    plat = current_platform()
+    checks: dict[str, object] = {
+        "platform": plat,
+        "capture_backend": cfg.audio.capture_backend,
+        "stt_provider": cfg.audio.stt_provider,
+        "hafiza_os_detected": is_hafiza_os_vault(cfg.vault.path),
+    }
+
+    tools: list[str] = ["ffmpeg", "claude", "codex", "agy", "opencode", "rg"]
+    if plat == "linux":
+        tools = [
+            "pw-record",
+            "pw-play",
+            "pactl",
+            "voxtype",
+            "whisper-server",
+            "omarchy-shell",
+            "omarchy-notification-send",
+            "systemd-run",
+            *tools,
+        ]
+    elif plat == "macos":
+        tools = ["afplay", "osascript", "terminal-notifier", "whisper-server", *tools]
+    else:
+        tools = ["powershell", "whisper-server", *tools]
+
+    for tool in tools:
         checks[f"bin:{tool}"] = shutil.which(tool) is not None
+
+    # Opsiyonel çapraz-platform masaüstü paketleri
+    for pkg in ("sounddevice", "pystray", "pynput"):
+        try:
+            __import__(pkg)
+            checks[f"pkg:{pkg}"] = True
+        except ImportError:
+            checks[f"pkg:{pkg}"] = False
+
+    # Ortam değişkeni varlığı (değer ASLA yazdırılmaz)
+    for env_name in ("GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TAVILY_API_KEY"):
+        checks[f"env:{env_name}"] = bool(os.environ.get(env_name, "").strip())
 
     checks["vault_exists"] = cfg.vault.path.is_dir()
     checks["hafiza_cli_exists"] = (cfg.vault.path / cfg.vault.hafiza_tools_dir / "hafiza.py").is_file()
 
-    # STT HTTP health check (non-fatal)
+    # STT HTTP health check (yalnız yerel uç noktalarda non-fatal)
     stt_ok = False
-    try:
-        base = cfg.audio.stt_endpoint.rsplit("/v1/", 1)[0]
-        r = httpx.get(f"{base}/health", timeout=1.0)
-        stt_ok = r.status_code < 500
-    except Exception:
-        stt_ok = False
+    if cfg.audio.stt_provider == "local":
+        try:
+            base = cfg.audio.stt_endpoint.rsplit("/v1/", 1)[0]
+            r = httpx.get(f"{base}/health", timeout=1.0)
+            stt_ok = r.status_code < 500
+        except Exception:
+            stt_ok = False
+    else:
+        stt_ok = True
     checks["stt_http_online"] = stt_ok
 
     if args.json:
         print(json.dumps(checks, ensure_ascii=False, indent=2))
         return 0
 
-    print("SesliNot Ortam Sağlık Denetimi:")
-    for key, ok in checks.items():
-        mark = "OK  " if ok else "YOK "
-        print(f"  [{mark}] {key}")
+    print(f"SesliNot Ortam Sağlık Denetimi ({plat}):")
+    for key, val in checks.items():
+        if isinstance(val, bool):
+            mark = "OK  " if val else "YOK "
+            print(f"  [{mark}] {key}")
+        else:
+            print(f"  [INFO] {key}: {val}")
     return 0
+
+
+def _toml_quote(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    """Linux, macOS ve Windows için etkileşimli / otomatik SesliNot kurulum sihirbazı."""
+    plat = current_platform()
+    cfg_path = args.config or default_config_path()
+
+    if cfg_path.is_file() and not args.force:
+        print(f"Yapılandırma zaten mevcut: {cfg_path}")
+        print("Üzerine yazmak için `--force` bayrağını kullanın.")
+        return 1
+
+    discovered = detect_obsidian_vaults()
+    interactive = (not args.non_interactive) and sys.stdin.isatty()
+
+    # 1. Obsidian kasası seçimi
+    vault_path: Path
+    if args.vault:
+        vault_path = Path(args.vault).expanduser().resolve()
+    elif discovered:
+        if interactive and len(discovered) > 1:
+            print("Keşfedilen Obsidian kasaları:")
+            for idx, v in enumerate(discovered, start=1):
+                tag = " [Hafıza OS]" if v.is_hafiza_os else ""
+                active = " (açık)" if v.is_open else ""
+                print(f"  {idx}) {v.name} — {v.path}{tag}{active}")
+            choice = input("Kullanılacak kasa numarası veya özel yol [1]: ").strip()
+            if not choice or choice == "1":
+                vault_path = discovered[0].path
+            elif choice.isdigit() and 1 <= int(choice) <= len(discovered):
+                vault_path = discovered[int(choice) - 1].path
+            else:
+                vault_path = Path(choice).expanduser().resolve()
+        else:
+            vault_path = discovered[0].path
+    else:
+        default_v = Path.home() / "Obsidian" / "SesliNot"
+        if interactive:
+            raw = input(f"Obsidian kasa yolu [{default_v}]: ").strip()
+            vault_path = Path(raw).expanduser().resolve() if raw else default_v
+        else:
+            vault_path = default_v
+
+    vault_path.mkdir(parents=True, exist_ok=True)
+    hafiza_detected = is_hafiza_os_vault(vault_path)
+
+    # 2. STT sağlayıcısı seçimi
+    stt_provider = args.stt
+    if stt_provider == "auto":
+        if plat == "linux" and (shutil.which("voxtype") or shutil.which("whisper-server")):
+            stt_provider = "local"
+        elif os.environ.get("GROQ_API_KEY"):
+            stt_provider = "groq"
+        elif os.environ.get("OPENAI_API_KEY"):
+            stt_provider = "openai"
+        elif interactive:
+            print("\nSes-metin (STT) profili:")
+            print("  1) local  — Yerel whisper-server / voxtype (GPU önerilir)")
+            print("  2) groq   — Groq Cloud Whisper (ultra hızlı, GROQ_API_KEY)")
+            print("  3) openai — OpenAI Whisper API (OPENAI_API_KEY)")
+            c = input("Seçim [1]: ").strip().lower()
+            stt_provider = {"2": "groq", "groq": "groq", "3": "openai", "openai": "openai"}.get(c, "local")
+        else:
+            stt_provider = "local"
+
+    # 3. Araştırma backend seçimi
+    has_claude = shutil.which("claude") is not None
+    has_codex = shutil.which("codex") is not None
+    has_agy = shutil.which("agy") is not None
+    backend_mode = args.backend
+    if backend_mode == "auto":
+        if has_claude or has_codex or has_agy:
+            backend_mode = "cli"
+        elif os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+            backend_mode = "api"
+        else:
+            backend_mode = "cli" if plat == "linux" else "api"
+
+    if backend_mode == "api":
+        api_provider = "anthropic" if (os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY")) else "openai"
+        api_model = "claude-sonnet-4-20250514" if api_provider == "anthropic" else "gpt-4o-mini"
+        router_backends = '["api"]'
+        lead_backend = worker_backend = synth_backend = audit_backend = "api"
+        lead_model = worker_model = synth_model = audit_model = api_model
+    else:
+        api_provider = "openai"
+        api_model = "gpt-4o-mini"
+        ordered = [b for b, ok in (("claude", has_claude), ("agy", has_agy), ("codex", has_codex)) if ok]
+        if not ordered:
+            ordered = ["claude", "agy", "codex"]
+        router_backends = json.dumps(ordered)
+        lead_backend = "claude" if has_claude else ordered[0]
+        worker_backend = "codex" if has_codex else lead_backend
+        synth_backend = lead_backend
+        audit_backend = "codex" if (has_codex and synth_backend != "codex") else lead_backend
+        lead_model = "sonnet" if lead_backend == "claude" else "gpt-6-luna"
+        worker_model = "gpt-6-luna" if worker_backend == "codex" else "sonnet"
+        synth_model = lead_model
+        audit_model = "gpt-6-luna" if audit_backend == "codex" else "sonnet"
+
+    capture_backend = "pipewire" if (plat == "linux" and shutil.which("pw-record")) else "sounddevice"
+    use_systemd = "true" if (plat == "linux" and shutil.which("systemd-run")) else "false"
+    enable_omarchy = "true" if (plat == "linux" and shutil.which("omarchy-shell")) else "false"
+
+    toml_text = "\n".join(
+        [
+            "# SesliNot yapılandırması (`seslinot init` tarafından üretildi)",
+            "",
+            "[vault]",
+            f"path = {_toml_quote(vault_path.as_posix())}",
+            f"vault_name = {_toml_quote(vault_path.name)}",
+            'voice_dir = "sesli-notlar"',
+            'research_dir = "araştırmalar"',
+            f'hafiza_os_mode = "auto"  # tespit edildi: {"evet" if hafiza_detected else "hayır"}',
+            "auto_update_maps = true",
+            "",
+            "[audio]",
+            f"capture_backend = {_toml_quote(capture_backend)}",
+            f"stt_provider = {_toml_quote(stt_provider)}",
+            'language = "tr"',
+            'retention = "opus_30d"',
+            "",
+            "[router]",
+            f"backends = {router_backends}",
+            "auto_start_threshold = 0.80",
+            "confirm_threshold = 0.55",
+            "",
+            "[research]",
+            f"lead_backend = {_toml_quote(lead_backend)}",
+            f"lead_model = {_toml_quote(lead_model)}",
+            f"worker_backend = {_toml_quote(worker_backend)}",
+            f"worker_model = {_toml_quote(worker_model)}",
+            f"synth_backend = {_toml_quote(synth_backend)}",
+            f"synth_model = {_toml_quote(synth_model)}",
+            f"audit_backend = {_toml_quote(audit_backend)}",
+            f"audit_model = {_toml_quote(audit_model)}",
+            f"api_provider = {_toml_quote(api_provider)}",
+            f"api_model = {_toml_quote(api_model)}",
+            f"use_systemd_run = {use_systemd}",
+            "require_save_approval = true",
+            "",
+            "[desktop]",
+            f"enable_osd = {enable_omarchy}",
+            "enable_notifications = true",
+            f"enable_bar_refresh = {enable_omarchy}",
+            'hotkey_toggle = "<ctrl>+<alt>+n"',
+            "",
+        ]
+    )
+
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(toml_text, encoding="utf-8")
+
+    # Kasa banka klasörlerini (.base + README) güvenle başlat
+    new_cfg = load_config(cfg_path)
+    new_cfg.paths.ensure_dirs()
+    VaultWriter(new_cfg).ensure_bank_scaffolding()
+
+    print(f"Kurulum tamamlandı ({plat})!")
+    print(f"  Yapılandırma : {cfg_path}")
+    print(f"  Obsidian kasa: {vault_path} ({'Hafıza OS' if hafiza_detected else 'Standart Obsidian'})")
+    print(f"  Ses / STT    : {capture_backend} / {stt_provider}")
+    print(f"  Araştırma    : {backend_mode} (onay kapısı: açık)")
+    if plat == "linux":
+        print("\nSonraki adım: `seslinot doctor` ve arka plan servisi için `seslinotd` çalıştırın.")
+    else:
+        print("\nSonraki adım: Sistem tepsisi ve global kısayol için `seslinot tray` çalıştırın.")
+    return 0
+
+
+def _cmd_tray(cfg: SesliNotConfig) -> int:
+    from seslinot.desktop.tray import SesliNotTrayApp
+
+    try:
+        return SesliNotTrayApp(cfg).run()
+    except RuntimeError as exc:
+        print(f"Hata: {exc}", file=sys.stderr)
+        return 1
 
 
 def _cmd_memory_approve(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
@@ -391,7 +607,7 @@ def _cmd_memory_approve(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
     result = bridge.promote_user_approved_memory(
         statement=args.statement,
         subject_key=args.subject_key,
-        source_rel_path=note.vault_rel_path,
+        source_path=note.vault_rel_path,
         evidence=args.evidence or note.raw_transcript[:200],
         scope=args.scope or note.scope,
         category=args.category,
@@ -404,10 +620,19 @@ def _cmd_memory_approve(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="seslinot",
-        description="SesliNot — Yerel GPU sesli not ve çok-ajanlı derin araştırma CLI",
+        description="SesliNot — Çapraz-platform sesli not ve çok-ajanlı derin araştırma CLI",
     )
     p.add_argument("--config", type=Path, default=None, help="Özel config.toml yolu")
     sub = p.add_subparsers(dest="command", required=True)
+
+    init_p = sub.add_parser("init", help="Linux/macOS/Windows için ilk kurulum sihirbazı")
+    init_p.add_argument("--vault", type=str, default="", help="Obsidian kasa klasör yolu")
+    init_p.add_argument("--stt", choices=["auto", "local", "groq", "openai"], default="auto")
+    init_p.add_argument("--backend", choices=["auto", "cli", "api"], default="auto")
+    init_p.add_argument("--non-interactive", action="store_true", help="Soru sormadan otomatik kur")
+    init_p.add_argument("--force", action="store_true", help="Mevcut config.toml üzerine yaz")
+
+    sub.add_parser("tray", help="Sistem tepsisi ve global kısayol uygulamasını başlat (Win/Mac/Linux)")
 
     rec = sub.add_parser("record", help="Sesli not kaydını yönet")
     rec.add_argument(
@@ -439,7 +664,7 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("status", help="Aktif durum, son notlar ve işler")
     st.add_argument("--json", action="store_true")
 
-    doc = sub.add_parser("doctor", help="Yerel araçlar, STT ve Hafıza kasası sağlık kontrolü")
+    doc = sub.add_parser("doctor", help="Yerel araçlar, STT ve Obsidian kasası sağlık kontrolü")
     doc.add_argument("--json", action="store_true")
 
     mem = sub.add_parser("memory", help="Kullanıcı onaylı Hafıza OS aday/terfi köprüsü")
@@ -458,8 +683,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "init":
+        return _cmd_init(args)
+
     cfg = load_config(args.config)
 
+    if args.command == "tray":
+        return _cmd_tray(cfg)
     if args.command == "record":
         return _cmd_record(args, cfg)
     if args.command == "note":
