@@ -1,0 +1,24 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Local runtime / databases / audio / sessions
+*.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.wav
+*.opus
+*.mp3
+*.ogg
+*.log
+.env
+.env.*
