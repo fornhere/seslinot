@@ -12,7 +12,7 @@ RestartSec=5
 TimeoutStopSec=15
 KillMode=mixed
 Environment=PYTHONUNBUFFERED=1
-Environment=PATH=%h/.local/bin:/usr/share/omarchy/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:/usr/share/omarchy/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=graphical-session.target
