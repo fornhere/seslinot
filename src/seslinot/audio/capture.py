@@ -276,7 +276,7 @@ class AudioCaptureController:
             if managed_proc.poll() is not None:
                 self._active_proc = None
                 return
-            if os.name != "nt":
+            if current_platform() != "windows":
                 try:
                     managed_proc.send_signal(signal.SIGINT)
                 except ProcessLookupError:
@@ -298,7 +298,7 @@ class AudioCaptureController:
         if not _is_pid_alive(pid):
             return
 
-        if os.name != "nt":
+        if current_platform() != "windows":
             try:
                 os.kill(pid, signal.SIGINT)
             except ProcessLookupError:

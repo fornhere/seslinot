@@ -114,6 +114,7 @@ def test_play_cue_start_blocking_settle_and_fallbacks(
     popen_calls: list[list[str]] = []
     sleeps: list[float] = []
 
+    monkeypatch.setattr("seslinot.platform.os_compat.current_platform", lambda *a, **k: "linux")
     monkeypatch.setattr("seslinot.audio.cues.shutil.which", lambda name: f"/usr/bin/{name}" if name == "pw-play" else None)
     monkeypatch.setattr(
         "seslinot.audio.cues.subprocess.run",
@@ -320,6 +321,7 @@ def test_capture_controller_full_segmented_lifecycle_and_cancel(
         def kill(self) -> None:
             self._returncode = -9
 
+    monkeypatch.setattr("seslinot.audio.capture.current_platform", lambda *a, **k: "linux")
     monkeypatch.setattr("seslinot.audio.capture.shutil.which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr("seslinot.audio.capture.subprocess.Popen", FakePopen)
     monkeypatch.setattr(

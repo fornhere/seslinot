@@ -436,8 +436,8 @@ def test_cli_note_status_doctor_and_ctl(tmp_path: Path, capsys) -> None:
     cfg = _make_isolated_cfg(tmp_path)
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
-        f'[vault]\npath = "{cfg.vault.path}"\nvault_name = "Hafıza"\n'
-        f'[paths]\ndata_dir = "{cfg.paths.data_dir}"\nstate_dir = "{cfg.paths.state_dir}"\nruntime_dir = "{cfg.paths.runtime_dir}"\n'
+        f'[vault]\npath = "{cfg.vault.path.as_posix()}"\nvault_name = "Hafıza"\n'
+        f'[paths]\ndata_dir = "{cfg.paths.data_dir.as_posix()}"\nstate_dir = "{cfg.paths.state_dir.as_posix()}"\nruntime_dir = "{cfg.paths.runtime_dir.as_posix()}"\n'
         "[desktop]\nenable_osd = false\nenable_notifications = false\nenable_bar_refresh = false\n"
         "[audio]\ncues_enabled = false\nduck_enabled = false\n",
         encoding="utf-8",

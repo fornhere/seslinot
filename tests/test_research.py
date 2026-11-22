@@ -302,6 +302,7 @@ def test_extract_json_from_text_variants() -> None:
 
 
 def test_process_runner_systemd_wrapper_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("seslinot.research.runner.current_platform", lambda *a, **k: "linux")
     monkeypatch.setattr("seslinot.research.runner.shutil.which", lambda name: "/usr/bin/systemd-run")
     runner = ProcessRunner(use_systemd_run=True)
     wrapped, unit = runner.build_wrapped_command(

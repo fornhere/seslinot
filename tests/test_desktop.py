@@ -231,6 +231,7 @@ def test_notifier_dbus_primary_and_cli_fallbacks(
 ) -> None:
     cfg = _make_test_config(tmp_path)
     notifier = OmarchyNotifier(cfg)
+    monkeypatch.setattr("seslinot.platform.os_compat.current_platform", lambda *a, **k: "linux")
 
     # 1) Primary D-Bus yolu (sahte dbus modülü ile)
     recorded_dbus: list[tuple[Any, ...]] = []
