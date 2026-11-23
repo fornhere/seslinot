@@ -64,14 +64,14 @@ def main() -> int:
 
     built = dist_dir / bin_name
     if not built.is_file():
-        print(f"Beklenen sidecar bulunamadı: {built}", file=sys.stderr)
+        print(f"Expected sidecar not found: {built}", file=sys.stderr)
         return 1
 
     target = BIN_DIR / bin_name
     shutil.copy2(built, target)
     if os.name != "nt":
         os.chmod(target, 0o755)
-    print(f"Sidecar hazır: {target} ({target.stat().st_size / (1024 * 1024):.1f} MB)")
+    print(f"Sidecar ready: {target} ({target.stat().st_size / (1024 * 1024):.1f} MB)")
 
     # Release derlemesinde `resources: ["binaries/*"]` paketlensin
     conf = json.loads(TAURI_CONF.read_text(encoding="utf-8"))

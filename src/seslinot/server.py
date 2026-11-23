@@ -776,7 +776,7 @@ def run_server(
 
     ready_line = json.dumps(
         {"event": "ready", "host": host, "port": actual_port, "token": api_token, "version": __version__},
-        ensure_ascii=False,
+        ensure_ascii=True,
     )
     print(ready_line, flush=True)
 

@@ -11,6 +11,13 @@ from seslinot.server import run_server
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
     if len(sys.argv) >= 2 and sys.argv[1] == "--sd-record":
         from seslinot.audio._sd_record import main as sd_main
 
