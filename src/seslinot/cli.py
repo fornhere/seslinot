@@ -597,6 +597,19 @@ def _cmd_tray(cfg: SesliNotConfig) -> int:
         return 1
 
 
+def _cmd_server(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
+    from seslinot.server import run_server
+
+    return run_server(
+        cfg,
+        host=args.host,
+        port=args.port,
+        token=args.token or None,
+        config_path=args.config,
+        no_daemon=bool(args.no_daemon),
+    )
+
+
 def _cmd_memory_approve(args: argparse.Namespace, cfg: SesliNotConfig) -> int:
     db = SesliNotDB(cfg.paths.db_path)
     note = db.get_note(args.note_id)
@@ -633,6 +646,12 @@ def build_parser() -> argparse.ArgumentParser:
     init_p.add_argument("--force", action="store_true", help="Mevcut config.toml üzerine yaz")
 
     sub.add_parser("tray", help="Sistem tepsisi ve global kısayol uygulamasını başlat (Win/Mac/Linux)")
+
+    srv = sub.add_parser("server", help="Tauri masaüstü arayüzü için yerel HTTP+SSE sunucusunu başlat")
+    srv.add_argument("--host", type=str, default="127.0.0.1")
+    srv.add_argument("--port", type=int, default=0, help="0=otomatik boş port")
+    srv.add_argument("--token", type=str, default="", help="Özel Bearer token")
+    srv.add_argument("--no-daemon", action="store_true", help="Gömülü araştırma daemon'ını başlatma")
 
     rec = sub.add_parser("record", help="Sesli not kaydını yönet")
     rec.add_argument(
@@ -690,6 +709,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "tray":
         return _cmd_tray(cfg)
+    if args.command == "server":
+        return _cmd_server(args, cfg)
     if args.command == "record":
         return _cmd_record(args, cfg)
     if args.command == "note":

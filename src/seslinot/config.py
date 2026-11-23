@@ -202,6 +202,17 @@ class SesliNotConfig(BaseModel):
     desktop: DesktopConfig = Field(default_factory=DesktopConfig)
 
 
+ALLOWED_SECRET_KEYS: tuple[str, ...] = (
+    "GROQ_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "TAVILY_API_KEY",
+    "BRAVE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+)
+
+
 def default_config_path() -> Path:
     env_path = os.environ.get("SESLINOT_CONFIG")
     if env_path:
@@ -209,8 +220,155 @@ def default_config_path() -> Path:
     return default_config_dir() / "config.toml"
 
 
+def default_secrets_path(cfg_path: Path | None = None) -> Path:
+    base = (cfg_path or default_config_path()).parent
+    return base / "secrets.env"
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            key = k.strip()
+            val = v.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in {"'", '"'}:
+                val = val[1:-1]
+            if key in ALLOWED_SECRET_KEYS and val:
+                values[key] = val
+    except OSError:
+        return {}
+    return values
+
+
+def load_secrets_env(cfg_path: Path | None = None) -> dict[str, str]:
+    """Kullanıcı yapılandırma dizinindeki `secrets.env` dosyasını ortam değişkenlerine yükler."""
+    sec_path = default_secrets_path(cfg_path)
+    loaded = _parse_env_file(sec_path)
+    for k, v in loaded.items():
+        os.environ.setdefault(k, v)
+    return loaded
+
+
+def save_secrets_env(updates: dict[str, str | None], cfg_path: Path | None = None) -> dict[str, bool]:
+    """API anahtarlarını kasa dışında, 0600 izinli `secrets.env` dosyasında güvenle saklar."""
+    sec_path = default_secrets_path(cfg_path)
+    existing = _parse_env_file(sec_path)
+    for key, val in updates.items():
+        if key not in ALLOWED_SECRET_KEYS:
+            continue
+        if val is None:
+            continue
+        clean = val.strip()
+        if clean:
+            existing[key] = clean
+            os.environ[key] = clean
+        else:
+            existing.pop(key, None)
+            os.environ.pop(key, None)
+
+    sec_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# SesliNot yerel API anahtarları (kasa dışındadır, asla paylaşılmaz)"]
+    for key in ALLOWED_SECRET_KEYS:
+        if key in existing:
+            escaped = existing[key].replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'{key}="{escaped}"')
+    sec_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        try:
+            os.chmod(sec_path, 0o600)
+        except OSError:
+            pass
+    return {key: bool(os.environ.get(key, "").strip()) for key in ALLOWED_SECRET_KEYS}
+
+
+def write_config_toml(cfg: SesliNotConfig, cfg_path: Path) -> Path:
+    """`SesliNotConfig` nesnesini temiz, okunabilir ve çapraz-platform geçerli TOML olarak yazar."""
+    import json as _json
+
+    def _q(val: str) -> str:
+        return _json.dumps(val, ensure_ascii=False)
+
+    def _b(val: bool) -> str:
+        return "true" if val else "false"
+
+    def _list(items: list[str]) -> str:
+        return "[" + ", ".join(_q(x) for x in items) + "]"
+
+    lines = [
+        "# SesliNot yapılandırma dosyası",
+        "",
+        "[vault]",
+        f"path = {_q(Path(cfg.vault.path).expanduser().as_posix())}",
+        f"vault_name = {_q(cfg.vault.vault_name)}",
+        f"voice_dir = {_q(cfg.vault.voice_dir)}",
+        f"research_dir = {_q(cfg.vault.research_dir)}",
+        f"hafiza_os_mode = {_q(cfg.vault.hafiza_os_mode)}",
+        f"personal_terms = {_list(cfg.vault.personal_terms)}",
+        f"auto_update_maps = {_b(cfg.vault.auto_update_maps)}",
+        "",
+        "[audio]",
+        f"capture_backend = {_q(cfg.audio.capture_backend)}",
+        f"stt_provider = {_q(cfg.audio.stt_provider)}",
+        f"stt_endpoint = {_q(cfg.audio.stt_endpoint)}",
+        f"stt_model = {_q(cfg.audio.stt_model)}",
+        f"stt_api_key_env = {_q(cfg.audio.stt_api_key_env)}",
+        f"stt_fallback_voxtype = {_b(cfg.audio.stt_fallback_voxtype)}",
+        f"language = {_q(cfg.audio.language)}",
+        f"duck_enabled = {_b(cfg.audio.duck_enabled)}",
+        f"cues_enabled = {_b(cfg.audio.cues_enabled)}",
+        f"retention = {_q(cfg.audio.retention)}",
+        "",
+        "[router]",
+        f"backends = {_list(cfg.router.backends)}",
+        f"auto_start_threshold = {cfg.router.auto_start_threshold}",
+        f"confirm_threshold = {cfg.router.confirm_threshold}",
+        f"claude_model = {_q(cfg.router.claude_model)}",
+        f"agy_model = {_q(cfg.router.agy_model)}",
+        f"codex_model = {_q(cfg.router.codex_model)}",
+        "",
+        "[research]",
+        f"lead_backend = {_q(cfg.research.lead_backend)}",
+        f"lead_model = {_q(cfg.research.lead_model)}",
+        f"worker_backend = {_q(cfg.research.worker_backend)}",
+        f"worker_model = {_q(cfg.research.worker_model)}",
+        f"worker_fallback_backend = {_q(cfg.research.worker_fallback_backend)}",
+        f"worker_fallback_model = {_q(cfg.research.worker_fallback_model)}",
+        f"synth_backend = {_q(cfg.research.synth_backend)}",
+        f"synth_model = {_q(cfg.research.synth_model)}",
+        f"audit_backend = {_q(cfg.research.audit_backend)}",
+        f"audit_model = {_q(cfg.research.audit_model)}",
+        f"audit_fallback_backend = {_q(cfg.research.audit_fallback_backend)}",
+        f"audit_fallback_model = {_q(cfg.research.audit_fallback_model)}",
+        f"api_provider = {_q(cfg.research.api_provider)}",
+        f"api_base_url = {_q(cfg.research.api_base_url)}",
+        f"api_key_env = {_q(cfg.research.api_key_env)}",
+        f"api_model = {_q(cfg.research.api_model)}",
+        f"search_provider = {_q(cfg.research.search_provider)}",
+        f"max_subagents = {cfg.research.max_subagents}",
+        f"use_systemd_run = {_b(cfg.research.use_systemd_run)}",
+        f"require_save_approval = {_b(cfg.research.require_save_approval)}",
+        "",
+        "[desktop]",
+        f"enable_osd = {_b(cfg.desktop.enable_osd)}",
+        f"enable_notifications = {_b(cfg.desktop.enable_notifications)}",
+        f"enable_bar_refresh = {_b(cfg.desktop.enable_bar_refresh)}",
+        f"hotkey_toggle = {_q(cfg.desktop.hotkey_toggle)}",
+        "",
+    ]
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text("\n".join(lines), encoding="utf-8")
+    return cfg_path
+
+
 def load_config(path: Path | None = None) -> SesliNotConfig:
     cfg_path = path or default_config_path()
+    load_secrets_env(cfg_path)
     data: dict = {}
     if cfg_path.is_file():
         data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))

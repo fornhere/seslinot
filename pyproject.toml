@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "seslinot"
-version = "0.2.0"
+version = "0.3.0"
 description = "Linux, macOS ve Windows için sesli not yakalama ve doğrulanmış kaynaklı çok-ajanlı derin araştırma sistemi (Obsidian & opsiyonel Hafıza OS uyumlu)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -43,6 +43,8 @@ dependencies = [
     "httpx>=0.27.2",
     "trafilatura>=2.0.0",
     "rapidfuzz>=3.9.0",
+    "starlette>=0.41.0",
+    "uvicorn>=0.32.0",
 ]
 
 [project.optional-dependencies]

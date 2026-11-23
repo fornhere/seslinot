@@ -305,6 +305,71 @@ class SesliNotPipeline:
             self.osd.close()
             raise
 
+    def _capture_controller(self):
+        from seslinot.audio import AudioCaptureController
+
+        return AudioCaptureController(self.cfg)
+
+    def start_recording(self) -> dict[str, Any]:
+        ctrl = self._capture_controller()
+        st = ctrl.start()
+        self.osd.show("Dinleniyor...", icon="microphone", duration_ms=0)
+        self._sync_state(VoiceState.RECORDING, int(st.get("recording_started_at") or 0))
+        return {"action": "started", "capture": st}
+
+    def pause_or_resume_recording(self) -> dict[str, Any]:
+        ctrl = self._capture_controller()
+        cur = ctrl.status()
+        if cur.get("state") == "recording":
+            st = ctrl.pause()
+            self.osd.show("Duraklatıldı", icon="󰏤", duration_ms=0)
+            self._sync_state(VoiceState.PAUSED, int(st.get("recording_started_at") or 0))
+            return {"action": "paused", "capture": st}
+        if cur.get("state") == "paused":
+            st = ctrl.resume()
+            self.osd.show("Dinleniyor...", icon="microphone", duration_ms=0)
+            self._sync_state(VoiceState.RECORDING, int(st.get("recording_started_at") or 0))
+            return {"action": "resumed", "capture": st}
+        return {"action": "noop", "capture": cur}
+
+    def cancel_recording(self) -> dict[str, Any]:
+        ctrl = self._capture_controller()
+        ctrl.cancel()
+        self.osd.close()
+        self._sync_state(VoiceState.IDLE, 0)
+        return {"action": "cancelled"}
+
+    async def stop_and_ingest(
+        self,
+        *,
+        force_research: bool = False,
+        run_stage2_inline: bool = False,
+    ) -> dict[str, Any]:
+        ctrl = self._capture_controller()
+        wav_path = ctrl.stop()
+        res = await self.ingest_wav(
+            wav_path,
+            force_research=force_research,
+            run_stage2_inline=run_stage2_inline,
+        )
+        res["action"] = "stopped"
+        return res
+
+    async def toggle_recording(
+        self,
+        *,
+        force_research: bool = False,
+        run_stage2_inline: bool = False,
+    ) -> dict[str, Any]:
+        ctrl = self._capture_controller()
+        st = ctrl.status()
+        if st.get("state") in {"recording", "paused"}:
+            return await self.stop_and_ingest(
+                force_research=force_research,
+                run_stage2_inline=run_stage2_inline,
+            )
+        return self.start_recording()
+
     async def route_job(self, job: ResearchJob) -> RouteDecision:
         """Daemon `PENDING_ROUTE` işleyici sözleşmesi."""
         decision, _action = await self.router.route(job.raw_prompt, force_stage2=True)
