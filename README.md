@@ -49,9 +49,24 @@ flowchart LR
 
 ## Kurulum (Linux, macOS, Windows)
 
+### Seçenek A — Masaüstü Uygulaması (Önerilen · Terminal Gerektirmez)
+
+Windows, macOS ve Linux için **Tauri v2** tabanlı yerli masaüstü uygulaması (koyu Obsidian arayüzü, yüzen kayıt hapı HUD, canlı çok-ajanlı takip, tam Markdown onay önizleme ekranı, sistem tepsisi ve global kısayol):
+
+1. [**GitHub Releases**](https://github.com/fornhere/seslinot/releases) sayfasından işletim sistemine uygun kurulum dosyasını indir:
+   - **Windows:** `SesliNot_*_x64-setup.exe` (veya `.msi`)
+   - **macOS (Apple Silicon):** `SesliNot_*_aarch64.dmg`
+   - **Linux:** `SesliNot_*_amd64.AppImage` (veya `.deb`)
+2. Uygulamayı aç → **3 adımlı kurulum sihirbazı** Obsidian kasanı otomatik bulur, STT ve AI profilini ayarlar.
+3. Kısayol (**Windows/Linux:** `Ctrl + Alt + N`, **macOS:** `Cmd + Shift + N`) ile konuşmaya başla!
+
+> Kaynaktan çalıştırmak için: `cd apps/desktop && npm install && npm run tauri dev`
+
+### Seçenek B — CLI & Omarchy / Hyprland Kurulumu
+
 Önkoşul: Python 3.12+ ve [`uv`](https://docs.astral.sh/uv/) (veya `pipx`).
 
-### 1. Paketi Kurun
+#### 1. Paketi Kurun
 
 **Windows ve macOS (sistem tepsisi, global kısayol ve mikrofon dahil):**
 ```bash
@@ -63,7 +78,7 @@ uv tool install "git+https://github.com/fornhere/seslinot.git[desktop]"
 uv tool install "git+https://github.com/fornhere/seslinot.git"
 ```
 
-### 2. İlk Kurulum Sihirbazını Çalıştırın
+#### 2. İlk Kurulum Sihirbazını Çalıştırın
 
 `seslinot init`, sisteminizdeki Obsidian kasalarını `obsidian.json` üzerinden otomatik keşfeder, STT ve AI backend profilini algılayıp platforma uygun `config.toml` dosyasını oluşturur:
 
@@ -76,13 +91,9 @@ Otomatik / betik kurulum örneği (Cloud Groq STT + Direct API):
 seslinot init --non-interactive --vault "~/Obsidian/Notlarim" --stt groq --backend api
 ```
 
-### 3. Çalıştırın
+#### 3. Çalıştırın
 
-- **Windows / macOS:**
-  ```bash
-  seslinot tray
-  ```
-  Varsayılan global kısayol **`Ctrl + Alt + N`** ile kaydı başlatıp durdurabilir, tepsi menüsünden onay bekleyen raporları önizleyip kasaya kaydedebilirsiniz.
+- **Windows / macOS (hafif tepsi modu):** `seslinot tray`
 - **Linux (Omarchy / Hyprland):**
   `integrations/systemd/seslinotd.service`, `integrations/hyprland/bindings.lua` ve `integrations/omarchy-plugin/forn.seslinot/` dosyalarını kurarak `SUPER + N` (toggle), `SUPER + ALT + Z` (bas-konuş) ve `SUPER + SHIFT + R` (bar paneli) ile kullanabilirsiniz.
 

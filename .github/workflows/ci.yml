@@ -29,3 +29,21 @@ jobs:
 
       - name: Run pytest
         run: uv run pytest -q
+
+  desktop-frontend:
+    name: desktop UI (TypeScript + Vite build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install & Build Desktop Frontend
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build

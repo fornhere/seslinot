@@ -1,0 +1,93 @@
+name: Release Desktop (Windows / macOS / Linux)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tauri:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows (x64 · .exe/.msi)
+            platform: windows-latest
+            args: ""
+          - label: macOS (Apple Silicon · .dmg)
+            platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - label: Linux (x64 · .AppImage/.deb)
+            platform: ubuntu-22.04
+            args: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux WebKit2GTK & Tray dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libportaudio2
+
+      - name: Install macOS PortAudio
+        if: matrix.platform == 'macos-latest'
+        run: brew install portaudio
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Setup uv & Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build standalone Python sidecar (seslinot-server)
+        run: |
+          uv sync --extra desktop
+          uv pip install pyinstaller
+          uv run python scripts/build_sidecar.py
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build & Release Tauri v2 Desktop App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: v__VERSION__
+          releaseName: "SesliNot v__VERSION__"
+          releaseBody: |
+            ## SesliNot Masaüstü Uygulaması (Windows · macOS · Linux)
+
+            Terminal kurulumu gerektirmeden tek tıkla kurun:
+            - **Windows:** `SesliNot_*_x64-setup.exe` (veya `.msi`)
+            - **macOS (Apple Silicon):** `SesliNot_*_aarch64.dmg`
+            - **Linux:** `SesliNot_*_amd64.AppImage` (veya `.deb`)
+
+            > İlk açılışta 3 adımlı kurulum sihirbazı Obsidian kasanızı otomatik keşfeder.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

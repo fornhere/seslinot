@@ -231,15 +231,25 @@ class AudioCaptureController:
                 str(part_path),
             ]
         else:
-            cmd = [
-                sys.executable,
-                "-m",
-                "seslinot.audio._sd_record",
-                str(part_path),
-                str(self.cfg.audio.sample_rate),
-                str(self.cfg.audio.channels),
-                str(self._stop_flag_path),
-            ]
+            if getattr(sys, "frozen", False):
+                cmd = [
+                    sys.executable,
+                    "--sd-record",
+                    str(part_path),
+                    str(self.cfg.audio.sample_rate),
+                    str(self.cfg.audio.channels),
+                    str(self._stop_flag_path),
+                ]
+            else:
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "seslinot.audio._sd_record",
+                    str(part_path),
+                    str(self.cfg.audio.sample_rate),
+                    str(self.cfg.audio.channels),
+                    str(self._stop_flag_path),
+                ]
 
         try:
             proc = subprocess.Popen(
